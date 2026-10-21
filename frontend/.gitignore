@@ -1,0 +1,6 @@
+/.DS_Store
+/DerivedData/
+*.xcodeproj/project.xcworkspace/
+*.xcodeproj/xcuserdata/
+*.xcscmblueprint
+*.xccheckout
