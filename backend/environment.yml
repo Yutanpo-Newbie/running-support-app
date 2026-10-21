@@ -1,0 +1,16 @@
+name: running-osmnx
+channels:
+  - conda-forge
+dependencies:
+  - python=3.11
+  - osmnx
+  - fastapi
+  - uvicorn
+  - pydantic
+  - requests
+  - python-dotenv
+  - pytest
+  - httpx
+  - pip
+  - pip:
+      - httpx2
