@@ -11,6 +11,7 @@ from app.services.osm_client import (
     get_candidate_nodes_by_distance,
     generate_loop_route_candidates,
 )
+from app.algorithms.turn_detector import detect_turn_points
 
 def generate_mock_routes(request: RouteRequest) -> list[RouteCandidate]:
     """
@@ -185,6 +186,13 @@ def generate_osmnx_routes(request: RouteRequest) -> list[RouteCandidate]:
     routes: list[RouteCandidate] = []
 
     for index, route in enumerate(osm_route_candidates, start=1):
+
+        coordinates = route["coordinates"]
+
+        turn_points = detect_turn_points(
+            coordinates
+        )
+
         route_candidate = RouteCandidate(
             id=f"osm_route_{index:03d}",
             name=f"OSM実道路ルート候補{index}",
@@ -194,18 +202,33 @@ def generate_osmnx_routes(request: RouteRequest) -> list[RouteCandidate]:
             intersections=route["intersections"],
             traffic_score=route["traffic_score"],
             total_score=route["total_score"],
+
             coordinates=[
                 RoutePoint(
                     lat=point["lat"],
                     lon=point["lon"],
                 )
-                for point in route["coordinates"]
+                for point in coordinates
             ],
+
             geometry=GeoJsonLineString(
                 type=route["geometry"]["type"],
                 coordinates=route["geometry"]["coordinates"],
             ),
-            turn_points=[],
+
+            turn_points=[
+                TurnPoint(
+                    lat=point["lat"],
+                    lon=point["lon"],
+                    direction=point["direction"],
+                    instruction=(
+                        "次は右折です"
+                        if point["direction"] == "right"
+                        else "次は左折です"
+                    ),
+                )
+                for point in turn_points
+            ],
         )
 
         routes.append(route_candidate)
