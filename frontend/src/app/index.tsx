@@ -66,14 +66,17 @@ export default function HomeScreen() {
   const mapStartLocation =
     currentLocation ?? startLocation;
 
+  const [isPanelExpanded, setIsPanelExpanded] =
+    useState(false);
+
   const [locationStatus, setLocationStatus] =
     useState("現在地未取得");
 
   const [currentTurnIndex, setCurrentTurnIndex] =
     useState(0);
 
-  const [closestDistanceToTurn, setClosestDistanceToTurn] =
-    useState<number | null>(null);
+  const activeCheckpointRef =
+    useRef<number | "start" | null>(null);
 
   const [distanceToTurn, setDistanceToTurn] =
     useState<number | null>(null);
@@ -185,6 +188,7 @@ export default function HomeScreen() {
     routes[selectedRouteIndex];
 
   useEffect(() => {
+
     if (!currentLocation) {
       return;
     }
@@ -193,21 +197,282 @@ export default function HomeScreen() {
       return;
     }
 
-    const turnPoints = currentRoute.turn_points;
+    const turnPoints =
+      currentRoute.turn_points;
 
     if (
       !turnPoints ||
-      currentTurnIndex >= turnPoints.length
+      turnPoints.length === 0
     ) {
-      setNavigationStatus("すべての案内地点を通過しました");
-      setDistanceToTurn(null);
       return;
     }
+
+
+    // =====================================
+    // 設定
+    // =====================================
+
+    // チェックポイント到達判定
+    const ARRIVAL_DISTANCE = 20;
+
+    // 一度入ったチェックポイントから
+    // この距離以上離れたら再入場可能にする
+    const EXIT_DISTANCE = 30;
+
+
+    // =====================================
+    // STARTまでの距離
+    // =====================================
+
+    let distanceToStart: number | null =
+      null;
+
+    if (routeStartLocation) {
+
+      distanceToStart =
+        calculateDistanceMeters(
+          currentLocation.latitude,
+          currentLocation.longitude,
+          routeStartLocation.latitude,
+          routeStartLocation.longitude
+        );
+    }
+
+
+    // =====================================
+    // 各turn pointまでの距離を計算
+    // =====================================
+
+    const checkpointDistances =
+      turnPoints.map(
+        (turnPoint, index) => {
+
+          const distance =
+            calculateDistanceMeters(
+              currentLocation.latitude,
+              currentLocation.longitude,
+              turnPoint.lat,
+              turnPoint.lon
+            );
+
+          return {
+            index,
+            distance,
+          };
+        }
+      );
+
+
+    // =====================================
+    // 一番近いチェックポイント
+    // =====================================
+
+    const nearestCheckpoint =
+      checkpointDistances.reduce(
+        (nearest, current) => {
+
+          if (
+            current.distance <
+            nearest.distance
+          ) {
+            return current;
+          }
+
+          return nearest;
+        }
+      );
+
+
+    // =====================================
+    // 現在入っているチェックポイントの
+    // ロック解除
+    // =====================================
+
+    if (
+      activeCheckpointRef.current !== null
+    ) {
+
+      // STARTにいる場合
+      if (
+        activeCheckpointRef.current ===
+        "start"
+      ) {
+
+        if (
+          distanceToStart !== null &&
+          distanceToStart >
+          EXIT_DISTANCE
+        ) {
+
+          activeCheckpointRef.current =
+            null;
+        }
+
+      } else {
+
+        const activeIndex =
+          activeCheckpointRef.current;
+
+        const activeDistance =
+          checkpointDistances[
+            activeIndex
+          ]?.distance;
+
+
+        if (
+          activeDistance !== undefined &&
+          activeDistance >
+          EXIT_DISTANCE
+        ) {
+
+          activeCheckpointRef.current =
+            null;
+        }
+      }
+    }
+
+
+    // =====================================
+    // START地点に入った
+    // =====================================
+
+    if (
+      distanceToStart !== null &&
+      distanceToStart <=
+      ARRIVAL_DISTANCE &&
+      activeCheckpointRef.current === null
+    ) {
+
+      activeCheckpointRef.current =
+        "start";
+
+
+      // 全チェックポイント終了後ならGOAL
+      if (
+        currentTurnIndex >=
+        turnPoints.length
+      ) {
+
+        setNavigationStatus(
+          "GOALに到着しました"
+        );
+
+        setDistanceToTurn(0);
+
+        return;
+      }
+
+
+      // 途中から逆走してSTARTへ戻った
+      setCurrentTurnIndex(0);
+
+      setVibratedTurnIndex(null);
+
+      setNavigationStatus(
+        "START地点に戻りました"
+      );
+
+      return;
+    }
+
+
+    // =====================================
+    // いずれかのチェックポイントに到達
+    // =====================================
+
+    if (
+      nearestCheckpoint.distance <=
+      ARRIVAL_DISTANCE &&
+      activeCheckpointRef.current === null
+    ) {
+
+      const reachedIndex =
+        nearestCheckpoint.index;
+
+
+      activeCheckpointRef.current =
+        reachedIndex;
+
+
+      // 例：
+      //
+      // turnPoints[0] に到達
+      // → 次はturnPoints[1]
+      // → currentTurnIndex = 1
+      //
+      // 逆走してturnPoints[0]へ戻っても
+      // → currentTurnIndex = 1
+      //
+      // つまり方向判定不要
+      const nextIndex =
+        reachedIndex + 1;
+
+
+      setCurrentTurnIndex(
+        nextIndex
+      );
+
+      setVibratedTurnIndex(
+        null
+      );
+
+
+      // 最終チェックポイント
+      if (
+        nextIndex >=
+        turnPoints.length
+      ) {
+
+        setNavigationStatus(
+          "最終チェックポイント到達"
+        );
+
+        setDistanceToTurn(null);
+
+        return;
+      }
+
+
+      setNavigationStatus(
+        `チェックポイント${reachedIndex + 1
+        }到達`
+      );
+
+      return;
+    }
+
+
+    // =====================================
+    // 次に案内するチェックポイント
+    // =====================================
+
+    if (
+      currentTurnIndex >=
+      turnPoints.length
+    ) {
+
+      setNavigationStatus(
+        "GOALへ向かってください"
+      );
+
+      if (
+        distanceToStart !== null
+      ) {
+
+        setDistanceToTurn(
+          distanceToStart
+        );
+      }
+
+      return;
+    }
+
 
     const nextTurn =
       turnPoints[currentTurnIndex];
 
-    const distance =
+
+    const distanceToNextTurn =
       calculateDistanceMeters(
         currentLocation.latitude,
         currentLocation.longitude,
@@ -215,50 +480,76 @@ export default function HomeScreen() {
         nextTurn.lon
       );
 
-    setDistanceToTurn(distance);
 
-    // 最接近距離を記録
+    setDistanceToTurn(
+      distanceToNextTurn
+    );
+
+
+    // =====================================
+    // 50m振動
+    // =====================================
+
     if (
-      closestDistanceToTurn === null ||
-      distance < closestDistanceToTurn
+      distanceToNextTurn <= 50
     ) {
-      setClosestDistanceToTurn(distance);
-    }
 
-    // 50m以内
-    if (distance <= 50) {
-      if (nextTurn.direction === "right") {
-        setNavigationStatus("右折まで50m以内"); 8
-      } else if (nextTurn.direction === "left") {
-        setNavigationStatus("左折まで50m以内");
-      } else {
-        setNavigationStatus("道なりです");
+      if (
+        vibratedTurnIndex !==
+        currentTurnIndex
+      ) {
+
+        vibrateForTurn(
+          nextTurn.direction
+        );
+
+        setVibratedTurnIndex(
+          currentTurnIndex
+        );
       }
+
+
+      if (
+        nextTurn.direction ===
+        "right"
+      ) {
+
+        setNavigationStatus(
+          "右折まで50m以内"
+        );
+
+      } else if (
+        nextTurn.direction ===
+        "left"
+      ) {
+
+        setNavigationStatus(
+          "左折まで50m以内"
+        );
+
+      } else {
+
+        setNavigationStatus(
+          "道なりです"
+        );
+      }
+
     } else {
+
       setNavigationStatus(
-        `次の案内まで約${Math.round(distance)}m`
+        `次の案内まで約${Math.round(
+          distanceToNextTurn
+        )}m`
       );
     }
 
-    // 一度近づいたあと、離れ始めたら「通過」と判定
-    if (
-      closestDistanceToTurn !== null &&
-      closestDistanceToTurn <= 50 &&
-      distance > closestDistanceToTurn + 10
-    ) {
-      setCurrentTurnIndex(
-        (prevIndex) => prevIndex + 1
-      );
-
-      setClosestDistanceToTurn(null);
-      setDistanceToTurn(null);
-    }
 
   }, [
     currentLocation,
     currentRoute,
     currentTurnIndex,
-    closestDistanceToTurn,
+    routeStartLocation,
+    vibratedTurnIndex,
   ]);
 
   const [routeCoordinates, setRouteCoordinates] =
@@ -288,7 +579,9 @@ export default function HomeScreen() {
   const selectRoute = (
     index: number
   ) => {
-    const selectedRoute = routes[index];
+
+    const selectedRoute =
+      routes[index];
 
     if (!selectedRoute) {
       return;
@@ -296,8 +589,23 @@ export default function HomeScreen() {
 
     setSelectedRouteIndex(index);
 
+    setCurrentTurnIndex(0);
+
+    setDistanceToTurn(null);
+
+    setVibratedTurnIndex(null);
+
+    activeCheckpointRef.current =
+      null;
+
+    setNavigationStatus(
+      "ナビ待機中"
+    );
+
     setRouteCoordinates(
-      convertCoordinates(selectedRoute)
+      convertCoordinates(
+        selectedRoute
+      )
     );
   };
 
@@ -402,6 +710,14 @@ export default function HomeScreen() {
       setRoutes(fetchedRoutes);
 
       setSelectedRouteIndex(0);
+      setCurrentTurnIndex(0);
+      setDistanceToTurn(null);
+      setVibratedTurnIndex(null);
+      activeCheckpointRef.current =
+        null;
+      setNavigationStatus(
+        "ナビ開始"
+      );
 
       setRouteCoordinates(
         convertCoordinates(
@@ -425,6 +741,9 @@ export default function HomeScreen() {
   return (
     <View style={styles.container}>
 
+      {/* =========================
+        MAP
+    ========================== */}
       <MapView
         ref={mapRef}
         style={styles.map}
@@ -436,6 +755,7 @@ export default function HomeScreen() {
         }}
       >
 
+        {/* ルート */}
         {routeCoordinates.length > 0 && (
           <Polyline
             coordinates={routeCoordinates}
@@ -444,7 +764,7 @@ export default function HomeScreen() {
           />
         )}
 
-
+        {/* START / GOAL */}
         {routeStartLocation && (
           <Marker
             coordinate={routeStartLocation}
@@ -453,6 +773,7 @@ export default function HomeScreen() {
           />
         )}
 
+        {/* 現在地 */}
         {currentLocation && (
           <Marker
             coordinate={currentLocation}
@@ -465,174 +786,266 @@ export default function HomeScreen() {
       </MapView>
 
 
-      <View style={styles.panel}>
+      {/* =========================
+        BOTTOM PANEL
+    ========================== */}
+      <View
+        style={[
+          styles.panel,
+          isPanelExpanded
+            ? styles.panelExpanded
+            : styles.panelCollapsed,
+        ]}
+      >
 
-        {/* 距離入力 */}
-        <View style={styles.distanceRow}>
+        {/* パネル開閉 */}
+        <Pressable
+          style={styles.panelHandle}
+          onPress={() =>
+            setIsPanelExpanded(
+              (previous) => !previous
+            )
+          }
+        >
 
-          <Text style={styles.locationText}>
-            {locationStatus}
+          <View style={styles.handleBar} />
+
+          <Text style={styles.panelToggleText}>
+            {isPanelExpanded
+              ? "閉じる"
+              : "詳細を見る"}
           </Text>
-          <Text style={styles.navigationText}>
+
+        </Pressable>
+
+
+        {/* =========================
+          常に表示するナビ情報
+      ========================== */}
+        <View style={styles.navigationSummary}>
+
+          <Text style={styles.navigationMainText}>
             {navigationStatus}
           </Text>
 
-          {distanceToTurn !== null && (
-            <Text>
-              次の案内地点まで：
-              {Math.round(distanceToTurn)} m
-            </Text>
-          )}
+          <View style={styles.navigationRow}>
 
-          {currentRoute?.turn_points?.length > 0 && (
-            <Text>
-              案内ポイント：
-              {currentTurnIndex + 1}
-              /
-              {currentRoute.turn_points.length}
-            </Text>
-          )}
+            {/* 案内ポイント */}
+            {currentRoute?.turn_points?.length > 0 && (
+              <Text style={styles.navigationSubText}>
+                案内：
+                {Math.min(
+                  currentTurnIndex + 1,
+                  currentRoute.turn_points.length
+                )}
+                /
+                {currentRoute.turn_points.length}
 
-          <Text style={styles.sectionTitle}>
-            走行距離
-          </Text>
-
-          <View style={styles.distanceControls}>
-
-            <Pressable
-              onPress={decreaseDistance}
-              style={styles.distanceButton}
-            >
-              <Text style={styles.distanceButtonText}>
-                −
               </Text>
-            </Pressable>
-
-            <Text style={styles.distanceValue}>
-              {distanceKm.toFixed(1)} km
-            </Text>
-
-            <Pressable
-              onPress={increaseDistance}
-              style={styles.distanceButton}
-            >
-              <Text style={styles.distanceButtonText}>
-                ＋
+            )}
+            {/* 次の案内までの距離 */}
+            {distanceToTurn !== null && (
+              <Text style={styles.navigationDistance}>
+                {Math.round(distanceToTurn)}m
               </Text>
-            </Pressable>
-
-          </View>
-
-        </View>
-
-
-        {/* 重視条件 */}
-        <Text style={styles.sectionTitle}>
-          重視条件
-        </Text>
-
-        <View style={styles.priorityButtons}>
-
-          <PriorityButton
-            label="距離"
-            selected={priority === "distance"}
-            onPress={() =>
-              setPriority("distance")
-            }
-          />
-
-          <PriorityButton
-            label="走りやすさ"
-            selected={priority === "easy"}
-            onPress={() =>
-              setPriority("easy")
-            }
-          />
-
-          <PriorityButton
-            label="負荷"
-            selected={priority === "load"}
-            onPress={() =>
-              setPriority("load")
-            }
-          />
-
-        </View>
-
-
-        {currentRoute ? (
-          <>
-            <Text style={styles.routeName}>
-              {currentRoute.name}
-            </Text>
-
-            <Text>
-              距離：
-              {currentRoute.distance_km.toFixed(1)}
-              km
-            </Text>
-
-            <Text>
-              Score：
-              {currentRoute.total_score.toFixed(0)}
-            </Text>
-
-            <Text>
-              交差点：
-              {currentRoute.intersections}
-            </Text>
-          </>
-        ) : (
-          <Text style={styles.status}>
-            {status}
-          </Text>
-        )}
-
-
-        {routes.length > 0 && (
-
-          <View style={styles.routeButtons}>
-
-            {routes.map(
-              (route, index) => (
-
-                <Pressable
-                  key={route.id}
-                  onPress={() =>
-                    selectRoute(index)
-                  }
-                  style={[
-                    styles.routeButton,
-
-                    selectedRouteIndex === index &&
-                    styles.selectedRouteButton,
-                  ]}
-                >
-
-                  <Text
-                    style={[
-                      styles.routeButtonText,
-
-                      selectedRouteIndex === index &&
-                      styles.selectedRouteButtonText,
-                    ]}
-                  >
-                    候補{index + 1}
-                  </Text>
-
-                </Pressable>
-              )
             )}
 
           </View>
 
+          {/* GPS状態 */}
+          <Text style={styles.locationText}>
+            {locationStatus}
+          </Text>
+
+        </View>
+
+
+        {/* =========================
+          展開時のみ表示
+      ========================== */}
+        {isPanelExpanded && (
+
+          <View style={styles.panelDetails}>
+
+            {/* -------------------------
+              距離入力
+          -------------------------- */}
+            <View style={styles.distanceRow}>
+
+              <Text style={styles.sectionTitle}>
+                走行距離
+              </Text>
+
+              <View style={styles.distanceControls}>
+
+                <Pressable
+                  onPress={decreaseDistance}
+                  style={styles.distanceButton}
+                >
+                  <Text style={styles.distanceButtonText}>
+                    −
+                  </Text>
+                </Pressable>
+
+
+                <Text style={styles.distanceValue}>
+                  {distanceKm.toFixed(1)} km
+                </Text>
+
+
+                <Pressable
+                  onPress={increaseDistance}
+                  style={styles.distanceButton}
+                >
+                  <Text style={styles.distanceButtonText}>
+                    ＋
+                  </Text>
+                </Pressable>
+
+              </View>
+
+            </View>
+
+
+            {/* -------------------------
+              重視条件
+          -------------------------- */}
+            <Text style={styles.sectionTitle}>
+              重視条件
+            </Text>
+
+            <View style={styles.priorityButtons}>
+
+              <PriorityButton
+                label="距離"
+                selected={
+                  priority === "distance"
+                }
+                onPress={() =>
+                  setPriority("distance")
+                }
+              />
+
+              <PriorityButton
+                label="走りやすさ"
+                selected={
+                  priority === "easy"
+                }
+                onPress={() =>
+                  setPriority("easy")
+                }
+              />
+
+              <PriorityButton
+                label="負荷"
+                selected={
+                  priority === "load"
+                }
+                onPress={() =>
+                  setPriority("load")
+                }
+              />
+
+            </View>
+
+
+            {/* -------------------------
+              選択中ルート情報
+          -------------------------- */}
+            {currentRoute ? (
+
+              <View style={styles.routeInfo}>
+
+                <Text style={styles.routeName}>
+                  {currentRoute.name}
+                </Text>
+
+                <Text>
+                  距離：
+                  {currentRoute.distance_km.toFixed(1)}
+                  km
+                </Text>
+
+                <Text>
+                  Score：
+                  {currentRoute.total_score.toFixed(0)}
+                </Text>
+
+                <Text>
+                  交差点：
+                  {currentRoute.intersections}
+                </Text>
+
+              </View>
+
+            ) : (
+
+              <Text style={styles.status}>
+                {status}
+              </Text>
+
+            )}
+
+
+            {/* -------------------------
+              ルート候補
+          -------------------------- */}
+            {routes.length > 0 && (
+
+              <View style={styles.routeButtons}>
+
+                {routes.map(
+                  (route, index) => (
+
+                    <Pressable
+                      key={route.id}
+                      onPress={() =>
+                        selectRoute(index)
+                      }
+                      style={[
+                        styles.routeButton,
+
+                        selectedRouteIndex === index &&
+                        styles.selectedRouteButton,
+                      ]}
+                    >
+
+                      <Text
+                        style={[
+                          styles.routeButtonText,
+
+                          selectedRouteIndex === index &&
+                          styles.selectedRouteButtonText,
+                        ]}
+                      >
+                        候補{index + 1}
+                      </Text>
+
+                    </Pressable>
+
+                  )
+                )}
+
+              </View>
+
+            )}
+
+
+            {/* -------------------------
+              ルート取得
+          -------------------------- */}
+            <View style={styles.fetchButtonContainer}>
+
+              <Button
+                title="ルート取得"
+                onPress={fetchRoutes}
+              />
+
+            </View>
+
+          </View>
+
         )}
-
-
-        <Button
-          title="ルート取得"
-          onPress={fetchRoutes}
-        />
 
       </View>
 
@@ -693,20 +1106,101 @@ const styles = StyleSheet.create({
 
   panel: {
     position: "absolute",
-    top: 60,
-    left: 20,
-    right: 20,
+    left: 12,
+    right: 12,
+    bottom: 20,
 
     backgroundColor: "white",
+    borderRadius: 20,
 
-    padding: 15,
+    paddingHorizontal: 16,
+    paddingBottom: 14,
 
-    borderRadius: 12,
+    shadowColor: "#000",
+    shadowOffset: {
+      width: 0,
+      height: 3,
+    },
+    shadowOpacity: 0.2,
+    shadowRadius: 6,
+
+    elevation: 8,
+  },
+
+  panelCollapsed: {
+    minHeight: 125,
+  },
+
+  panelExpanded: {
+    maxHeight: "70%",
+  },
+
+  panelHandle: {
+    alignItems: "center",
+    paddingTop: 8,
+    paddingBottom: 4,
+  },
+
+  handleBar: {
+    width: 45,
+    height: 5,
+    borderRadius: 3,
+    backgroundColor: "#cccccc",
+    marginBottom: 4,
+  },
+
+  panelToggleText: {
+    fontSize: 12,
+    color: "#555555",
+  },
+
+  navigationSummary: {
+    paddingTop: 4,
+    paddingBottom: 8,
+  },
+
+  navigationMainText: {
+    fontSize: 20,
+    fontWeight: "700",
+    textAlign: "center",
+  },
+
+  navigationRow: {
+    flexDirection: "row",
+    justifyContent: "center",
+    alignItems: "center",
+    gap: 20,
+    marginTop: 6,
+  },
+
+  navigationSubText: {
+    fontSize: 14,
+    color: "#555555",
+  },
+
+  navigationDistance: {
+    fontSize: 22,
+    fontWeight: "700",
   },
 
   locationText: {
-    fontWeight: "bold",
-    marginBottom: 10,
+    textAlign: "center",
+    fontSize: 12,
+    color: "#777777",
+    marginTop: 4,
+  },
+
+  panelDetails: {
+    marginTop: 8,
+  },
+
+  routeInfo: {
+    marginTop: 12,
+    marginBottom: 8,
+  },
+
+  fetchButtonContainer: {
+    marginTop: 12,
   },
 
   navigationText: {
