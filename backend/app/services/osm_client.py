@@ -4,34 +4,200 @@ from app.algorithms.scoring import calculate_total_score
 from app.schemas.route_request import RoutePreferences
 from app.utils.geo import convert_to_geojson_linestring
 
+from pathlib import Path
+import math
+import json
+import time
+
+GRAPH_CACHE_DIR = Path("data/graph_cache")
+
+GRAPH_CACHE_DIR.mkdir(
+    parents=True,
+    exist_ok=True,
+)
+
+def calculate_distance_between_points(
+    lat1: float,
+    lon1: float,
+    lat2: float,
+    lon2: float,
+) -> float:
+
+    earth_radius = 6371000
+
+    lat1_rad = math.radians(lat1)
+    lat2_rad = math.radians(lat2)
+
+    delta_lat = math.radians(lat2 - lat1)
+    delta_lon = math.radians(lon2 - lon1)
+
+    a = (
+        math.sin(delta_lat / 2) ** 2
+        + math.cos(lat1_rad)
+        * math.cos(lat2_rad)
+        * math.sin(delta_lon / 2) ** 2
+    )
+
+    c = 2 * math.atan2(
+        math.sqrt(a),
+        math.sqrt(1 - a),
+    )
+
+    return earth_radius * c
+
 def get_road_graph(
     lat: float,
     lon: float,
     dist_m: int = 1000,
 ):
     """
-    指定した緯度経度の周辺道路ネットワークを取得する。
+    指定地点周辺の道路ネットワークを取得する。
 
-    Parameters
-    ----------
-    lat : float
-        緯度
-    lon : float
-        経度
-    dist_m : int
-        取得する範囲。単位はメートル。
+    保存済みの道路グラフが使える場合は
+    Overpass APIへ問い合わせずキャッシュを利用する。
 
-    Returns
-    -------
-    networkx.MultiDiGraph
-        OSMnxで取得した道路ネットワークグラフ
+    キャッシュが存在しない場合のみ、
+    Overpass APIから取得してGraphMLとして保存する。
     """
+
+    # 実際に必要な範囲より広めに取得しておく
+    cache_radius_m = max(
+        dist_m + 1500,
+        3000,
+    )
+
+    # -----------------------------
+    # 1. 既存キャッシュを探す
+    # -----------------------------
+
+    for metadata_file in GRAPH_CACHE_DIR.glob("*.json"):
+
+        try:
+            with open(
+                metadata_file,
+                "r",
+                encoding="utf-8",
+            ) as file:
+
+                metadata = json.load(file)
+
+            cache_lat = metadata["lat"]
+            cache_lon = metadata["lon"]
+            cached_radius = metadata["radius_m"]
+            graph_file_name = metadata["graph_file"]
+
+            distance_from_cache_center = (
+                calculate_distance_between_points(
+                    lat,
+                    lon,
+                    cache_lat,
+                    cache_lon,
+                )
+            )
+
+            # 現在地点から必要な範囲が
+            # キャッシュ内に収まるか確認
+            usable_radius = (
+                cached_radius - dist_m
+            )
+
+            if (
+                distance_from_cache_center
+                <= usable_radius
+            ):
+
+                graph_file = (
+                    GRAPH_CACHE_DIR
+                    / graph_file_name
+                )
+
+                if graph_file.exists():
+
+                    print(
+                        f"OSM graph cache HIT: "
+                        f"{graph_file_name}"
+                    )
+
+                    graph = ox.load_graphml(
+                        graph_file
+                    )
+
+                    return graph
+
+        except Exception as e:
+            print(
+                f"Cache check failed: {e}"
+            )
+
+    # -----------------------------
+    # 2. キャッシュなし
+    #    → Overpass APIから取得
+    # -----------------------------
+
+    print(
+        "OSM graph cache MISS "
+        "→ Overpass APIから取得"
+    )
 
     graph = ox.graph_from_point(
         center_point=(lat, lon),
-        dist=dist_m,
+        dist=cache_radius_m,
         network_type="walk",
         simplify=True,
+    )
+
+    # -----------------------------
+    # 3. GraphMLとして保存
+    # -----------------------------
+
+    timestamp = int(time.time())
+
+    graph_file_name = (
+        f"graph_{timestamp}.graphml"
+    )
+
+    metadata_file_name = (
+        f"graph_{timestamp}.json"
+    )
+
+    graph_file = (
+        GRAPH_CACHE_DIR
+        / graph_file_name
+    )
+
+    metadata_file = (
+        GRAPH_CACHE_DIR
+        / metadata_file_name
+    )
+
+    ox.save_graphml(
+        graph,
+        graph_file,
+    )
+
+    metadata = {
+        "lat": lat,
+        "lon": lon,
+        "radius_m": cache_radius_m,
+        "graph_file": graph_file_name,
+    }
+
+    with open(
+        metadata_file,
+        "w",
+        encoding="utf-8",
+    ) as file:
+
+        json.dump(
+            metadata,
+            file,
+            ensure_ascii=False,
+            indent=2,
+        )
+
+    print(
+        f"OSM graph cache SAVED: "
+        f"{graph_file_name}"
     )
 
     return graph
