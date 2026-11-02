@@ -14,6 +14,8 @@ import MapView, {
   Polyline,
 } from "react-native-maps";
 
+import * as Speech from "expo-speech";
+
 type TurnPoint = {
   lat: number;
   lon: number;
@@ -98,6 +100,31 @@ export default function HomeScreen() {
       // 右折：2回
       Vibration.vibrate([0, 400, 300, 400]);
     }
+  };
+
+  const speakForTurn = (
+    direction: "left" | "right" | "straight"
+  ) => {
+
+    let message = "";
+
+    if (direction === "left") {
+      message = "50メートル先、左です";
+    } else if (direction === "right") {
+      message = "50メートル先、右です";
+    } else {
+      message = "50メートル先、道なりです";
+    }
+
+    Speech.speak(
+      message,
+      {
+        language: "ja-JP",
+        rate: 0.9,
+        pitch: 1.0,
+        volume: 1.0,
+      }
+    );
   };
 
   const [vibratedTurnIndex, setVibratedTurnIndex] =
@@ -499,7 +526,13 @@ export default function HomeScreen() {
         currentTurnIndex
       ) {
 
+        // 振動
         vibrateForTurn(
+          nextTurn.direction
+        );
+
+        // 音声
+        speakForTurn(
           nextTurn.direction
         );
 

@@ -356,6 +356,437 @@ def create_loop_path(
 
     return outbound_path + return_path[1:]
 
+def create_multi_waypoint_loop(
+    graph,
+    start_node: int,
+    waypoint_a: int,
+    waypoint_b: int,
+) -> list[int] | None:
+    """
+    START
+      ↓
+    waypoint A
+      ↓
+    waypoint B
+      ↓
+    START
+
+    の周回経路を生成する。
+    """
+
+    path_start_to_a = (
+        ox.routing.shortest_path(
+            graph,
+            start_node,
+            waypoint_a,
+            weight="length",
+        )
+    )
+
+    if not path_start_to_a:
+        return None
+
+
+    path_a_to_b = (
+        ox.routing.shortest_path(
+            graph,
+            waypoint_a,
+            waypoint_b,
+            weight="length",
+        )
+    )
+
+    if not path_a_to_b:
+        return None
+
+
+    path_b_to_start = (
+        ox.routing.shortest_path(
+            graph,
+            waypoint_b,
+            start_node,
+            weight="length",
+        )
+    )
+
+    if not path_b_to_start:
+        return None
+
+
+    loop_path = (
+        path_start_to_a
+        + path_a_to_b[1:]
+        + path_b_to_start[1:]
+    )
+
+
+    return loop_path
+
+def calculate_edge_overlap_ratio(
+    path: list[int],
+) -> float:
+    """
+    ルート内で同じ道路区間を
+    繰り返している割合を計算する。
+
+    0.0 = 重複なし
+    1.0に近いほど重複が多い
+    """
+
+    if len(path) < 2:
+        return 0.0
+
+
+    edges = []
+
+    for i in range(
+        len(path) - 1
+    ):
+
+        node_a = path[i]
+        node_b = path[i + 1]
+
+
+        # 徒歩グラフでは、
+        # A→B と B→A は
+        # 同じ道路として扱う
+        edge = tuple(
+            sorted(
+                (
+                    node_a,
+                    node_b,
+                )
+            )
+        )
+
+        edges.append(edge)
+
+
+    total_edges = len(edges)
+
+    unique_edges = len(
+        set(edges)
+    )
+
+
+    if total_edges == 0:
+        return 0.0
+
+
+    duplicated_edges = (
+        total_edges
+        - unique_edges
+    )
+
+
+    return (
+        duplicated_edges
+        / total_edges
+    )
+
+def generate_multi_waypoint_route_candidates(
+    graph,
+    start_node: int,
+    candidate_nodes,
+    target_distance_km: float,
+    preferences: RoutePreferences,
+    max_routes: int = 5,
+):
+    """
+    START → A → B → START の周回候補を生成する。
+
+    評価するもの：
+    - 目標距離との差
+    - 道路重複率
+
+    曲がり回数の評価は次段階で追加する。
+    """
+
+    from app.algorithms.waypoint_generator import (
+        generate_waypoint_pairs,
+    )
+
+    # -------------------------------------
+    # candidate_nodes を node ID の一覧に統一
+    # -------------------------------------
+
+    normalized_nodes = []
+
+    for candidate in candidate_nodes:
+
+        # candidate_nodes が int のリストの場合
+        if isinstance(candidate, int):
+            normalized_nodes.append(candidate)
+
+        # dictの場合
+        elif isinstance(candidate, dict):
+
+            if "node_id" in candidate:
+                normalized_nodes.append(
+                    candidate["node_id"]
+                )
+
+            elif "node" in candidate:
+                normalized_nodes.append(
+                    candidate["node"]
+                )
+
+
+    if len(normalized_nodes) < 2:
+        return []
+
+
+    # -------------------------------------
+    # 方位角を考慮した waypoint A / B
+    # の組み合わせを作る
+    # -------------------------------------
+
+    waypoint_pairs = generate_waypoint_pairs(
+        graph=graph,
+        start_node=start_node,
+        candidate_nodes=normalized_nodes,
+        min_angle_difference=60.0,
+        max_angle_difference=160.0,
+        max_pairs=40,
+    )
+
+
+    route_candidates = []
+
+
+    # -------------------------------------
+    # START → A → B → START
+    # -------------------------------------
+
+    for waypoint_a, waypoint_b in waypoint_pairs:
+
+        try:
+
+            path = create_multi_waypoint_loop(
+                graph=graph,
+                start_node=start_node,
+                waypoint_a=waypoint_a,
+                waypoint_b=waypoint_b,
+            )
+
+        except Exception as error:
+
+            print(
+                "multi waypoint route error:",
+                waypoint_a,
+                waypoint_b,
+                error,
+            )
+
+            continue
+
+
+        if not path:
+            continue
+
+
+        # ---------------------------------
+        # 実際の道路距離
+        # ---------------------------------
+
+        distance_km = (
+            calculate_path_length_km(
+                graph,
+                path,
+            )
+        )
+
+
+        # ---------------------------------
+        # 極端に距離が違う候補を除外
+        # ---------------------------------
+
+        distance_error_km = abs(
+            distance_km
+            - target_distance_km
+        )
+
+
+        # 最初は ±25% まで許容
+        allowed_error_km = (
+            target_distance_km
+            * 0.25
+        )
+
+
+        if (
+            distance_error_km
+            >
+            allowed_error_km
+        ):
+            continue
+
+
+        # ---------------------------------
+        # 道路重複率
+        # ---------------------------------
+
+        overlap_ratio = (
+            calculate_edge_overlap_ratio(
+                path
+            )
+        )
+
+
+        # 50%以上同じ道路なら除外
+        if overlap_ratio >= 0.50:
+            continue
+
+
+        # ---------------------------------
+        # 座標変換
+        # ---------------------------------
+
+        coordinates = (
+            convert_path_to_coordinates(
+                graph,
+                path,
+            )
+        )
+
+
+        # ---------------------------------
+        # 仮スコア
+        #
+        # 今は
+        # 距離誤差 + 重複率
+        # だけで評価する。
+        #
+        # 小さい方が良い。
+        # ---------------------------------
+
+        distance_penalty = (
+            distance_error_km
+            * 100
+        )
+
+        overlap_penalty = (
+            overlap_ratio
+            * 100
+        )
+
+
+        preliminary_score = (
+            distance_penalty
+            +
+            overlap_penalty
+        )
+
+
+        loop_geometry = convert_to_geojson_linestring(
+            coordinates
+        )
+
+        # 現段階では既存実装と同様に仮値
+        elevation_gain_m = 0.0
+        signals = 0
+        intersections = max(
+            0,
+            len(path) - 2,
+        )
+        traffic_score = 0.0
+
+
+        # 既存のスコア計算をそのまま利用
+        base_score = calculate_total_score(
+            target_distance_km=target_distance_km,
+            actual_distance_km=distance_km,
+            elevation_gain_m=elevation_gain_m,
+            signals=signals,
+            intersections=intersections,
+            traffic_score=traffic_score,
+            preferences=preferences,
+        )
+
+
+        # 道路重複を追加ペナルティにする
+        overlap_penalty = (
+            overlap_ratio * 100
+        )
+
+
+        total_score = (
+            base_score
+            + overlap_penalty
+        )
+
+
+        route_candidates.append(
+            {
+                "path": path,
+
+                "coordinates":
+                    coordinates,
+
+                "geometry":
+                    loop_geometry,
+
+                "distance_km":
+                    distance_km,
+
+                "distance_m":
+                    round(
+                        distance_km * 1000,
+                        2,
+                    ),
+
+                "distance_error_m":
+                    round(
+                        distance_error_km * 1000,
+                        2,
+                    ),
+
+                "path_nodes":
+                    len(path),
+
+                "waypoint_a":
+                    waypoint_a,
+
+                "waypoint_b":
+                    waypoint_b,
+
+                "overlap_ratio":
+                    overlap_ratio,
+
+                "elevation_gain_m":
+                    elevation_gain_m,
+
+                "signals":
+                    signals,
+
+                "intersections":
+                    intersections,
+
+                "traffic_score":
+                    traffic_score,
+
+                "total_score":
+                    total_score,
+            }
+        )
+
+
+    # -------------------------------------
+    # 良い順
+    # -------------------------------------
+
+    route_candidates.sort(
+        key=lambda route:
+            route[
+                "total_score"
+            ]
+    )
+
+
+    return route_candidates[
+        :max_routes
+    ]
+
 def calculate_path_length_m(
     graph,
     path: list,

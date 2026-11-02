@@ -10,6 +10,7 @@ from app.services.osm_client import (
     get_nearest_node,
     get_candidate_nodes_by_distance,
     generate_loop_route_candidates,
+    generate_multi_waypoint_route_candidates,
 )
 from app.algorithms.turn_detector import detect_turn_points
 
@@ -164,23 +165,29 @@ def generate_osmnx_routes(request: RouteRequest) -> list[RouteCandidate]:
         lon=start_lon,
     )
 
-    target_oneway_distance_m = request.distance_km * 1000 / 2
+    target_waypoint_distance_m = (
+        request.distance_km
+        * 1000
+        / 3
+    )
 
     candidate_nodes = get_candidate_nodes_by_distance(
         graph=graph,
         start_node=start_node,
-        target_distance_m=target_oneway_distance_m,
+        target_distance_m=target_waypoint_distance_m,
         tolerance_m=300,
-        max_candidates=10,
+        max_candidates=12,
     )
 
-    osm_route_candidates = generate_loop_route_candidates(
-        graph=graph,
-        start_node=start_node,
-        candidate_nodes=candidate_nodes,
-        target_distance_km=request.distance_km,
-        preferences=request.preferences,
-        max_routes=3,
+    osm_route_candidates = (
+        generate_multi_waypoint_route_candidates(
+            graph=graph,
+            start_node=start_node,
+            candidate_nodes=candidate_nodes,
+            target_distance_km=request.distance_km,
+            preferences=request.preferences,
+            max_routes=3,
+        )
     )
 
     routes: list[RouteCandidate] = []

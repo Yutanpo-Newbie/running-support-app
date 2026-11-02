@@ -1,5 +1,139 @@
 import math
 
+def calculate_bearing(
+    start_lat: float,
+    start_lon: float,
+    end_lat: float,
+    end_lon: float,
+) -> float:
+    """
+    start地点からend地点への方位角を返す。
+    0° = 北
+    90° = 東
+    180° = 南
+    270° = 西
+    """
+
+    lat1 = math.radians(start_lat)
+    lat2 = math.radians(end_lat)
+
+    delta_lon = math.radians(
+        end_lon - start_lon
+    )
+
+    x = math.sin(delta_lon) * math.cos(lat2)
+
+    y = (
+        math.cos(lat1) * math.sin(lat2)
+        - math.sin(lat1)
+        * math.cos(lat2)
+        * math.cos(delta_lon)
+    )
+
+    bearing = math.degrees(
+        math.atan2(x, y)
+    )
+
+    return (bearing + 360) % 360
+
+
+def calculate_bearing_difference(
+    bearing1: float,
+    bearing2: float,
+) -> float:
+    """
+    2つの方位角の最小角度差を返す。
+    0〜180°。
+    """
+
+    difference = abs(
+        bearing1 - bearing2
+    )
+
+    return min(
+        difference,
+        360 - difference
+    )
+
+
+def generate_waypoint_pairs(
+    graph,
+    start_node: int,
+    candidate_nodes: list[int],
+    min_angle_difference: float = 60.0,
+    max_angle_difference: float = 160.0,
+    max_pairs: int = 30,
+) -> list[tuple[int, int]]:
+
+    start_data = graph.nodes[start_node]
+
+    start_lat = start_data["y"]
+    start_lon = start_data["x"]
+
+    candidate_info = []
+
+    for node in candidate_nodes:
+
+        if node == start_node:
+            continue
+
+        node_data = graph.nodes[node]
+
+        bearing = calculate_bearing(
+            start_lat,
+            start_lon,
+            node_data["y"],
+            node_data["x"],
+        )
+
+        candidate_info.append(
+            {
+                "node": node,
+                "bearing": bearing,
+            }
+        )
+
+
+    waypoint_pairs = []
+
+
+    for i in range(
+        len(candidate_info)
+    ):
+
+        for j in range(
+            i + 1,
+            len(candidate_info)
+        ):
+
+            first = candidate_info[i]
+            second = candidate_info[j]
+
+            angle_difference = (
+                calculate_bearing_difference(
+                    first["bearing"],
+                    second["bearing"],
+                )
+            )
+
+            if (
+                min_angle_difference
+                <= angle_difference
+                <= max_angle_difference
+            ):
+
+                waypoint_pairs.append(
+                    (
+                        first["node"],
+                        second["node"],
+                    )
+                )
+
+
+    return waypoint_pairs[
+        :max_pairs
+    ]
+
 def offset_lat_lon(
     lat: float,
     lon: float,
