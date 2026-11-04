@@ -176,7 +176,7 @@ def generate_osmnx_routes(request: RouteRequest) -> list[RouteCandidate]:
         start_node=start_node,
         target_distance_m=target_waypoint_distance_m,
         tolerance_m=300,
-        max_candidates=12,
+        max_candidates=20,
     )
 
     osm_route_candidates = (
