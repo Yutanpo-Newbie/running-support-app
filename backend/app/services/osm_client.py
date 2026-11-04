@@ -3,6 +3,12 @@ import networkx as nx
 from app.algorithms.scoring import calculate_total_score
 from app.schemas.route_request import RoutePreferences
 from app.utils.geo import convert_to_geojson_linestring
+from app.algorithms.turn_detector import detect_turn_points
+
+from app.algorithms.turn_aware_router import (
+    shortest_turn_aware_path,
+    get_used_edges,
+)
 
 from pathlib import Path
 import math
@@ -356,71 +362,116 @@ def create_loop_path(
 
     return outbound_path + return_path[1:]
 
+
 def create_multi_waypoint_loop(
     graph,
     start_node: int,
     waypoint_a: int,
     waypoint_b: int,
+    use_turn_aware: bool = True,
 ) -> list[int] | None:
     """
-    START
-      ↓
-    waypoint A
-      ↓
-    waypoint B
-      ↓
-    START
+    START → A → B → START
 
-    の周回経路を生成する。
+    use_turn_aware=True:
+        曲がりにくさと道路重複を考慮
+
+    use_turn_aware=False:
+        従来の最短距離方式
     """
 
-    path_start_to_a = (
-        ox.routing.shortest_path(
+    if use_turn_aware:
+
+        # -----------------------------
+        # 1. START → A
+        # -----------------------------
+
+        path_1 = shortest_turn_aware_path(
+            graph,
+            start_node,
+            waypoint_a,
+        )
+
+        if not path_1:
+            return None
+
+        # -----------------------------
+        # 2. A → B
+        # 先ほど通った道を避ける
+        # -----------------------------
+
+        used_edges = get_used_edges(path_1)
+
+        path_2 = shortest_turn_aware_path(
+            graph,
+            waypoint_a,
+            waypoint_b,
+            used_edges=used_edges,
+        )
+
+        if not path_2:
+            return None
+
+        # -----------------------------
+        # 3. B → START
+        # 以前の2区間の道路を避ける
+        # -----------------------------
+
+        used_edges.update(
+            get_used_edges(path_2)
+        )
+
+        path_3 = shortest_turn_aware_path(
+            graph,
+            waypoint_b,
+            start_node,
+            used_edges=used_edges,
+        )
+
+        if not path_3:
+            return None
+
+    else:
+
+        # 従来方式を残す
+        path_1 = ox.routing.shortest_path(
             graph,
             start_node,
             waypoint_a,
             weight="length",
         )
-    )
 
-    if not path_start_to_a:
-        return None
+        if not path_1:
+            return None
 
-
-    path_a_to_b = (
-        ox.routing.shortest_path(
+        path_2 = ox.routing.shortest_path(
             graph,
             waypoint_a,
             waypoint_b,
             weight="length",
         )
-    )
 
-    if not path_a_to_b:
-        return None
+        if not path_2:
+            return None
 
-
-    path_b_to_start = (
-        ox.routing.shortest_path(
+        path_3 = ox.routing.shortest_path(
             graph,
             waypoint_b,
             start_node,
             weight="length",
         )
-    )
 
-    if not path_b_to_start:
-        return None
-
+        if not path_3:
+            return None
 
     loop_path = (
-        path_start_to_a
-        + path_a_to_b[1:]
-        + path_b_to_start[1:]
+        path_1
+        + path_2[1:]
+        + path_3[1:]
     )
 
-
     return loop_path
+
 
 def calculate_edge_overlap_ratio(
     path: list[int],
@@ -482,6 +533,87 @@ def calculate_edge_overlap_ratio(
     return (
         duplicated_edges
         / total_edges
+    )
+
+def calculate_backtrack_distance_ratio(
+    graph,
+    path: list[int],
+) -> float:
+    """
+    同じ道路区間を逆方向に戻っている距離の割合を計算する。
+
+    0.0 = 折り返しなし
+    1.0に近いほど折り返しが多い
+    """
+
+    if len(path) < 2:
+        return 0.0
+
+
+    total_distance_m = 0.0
+    backtrack_distance_m = 0.0
+
+    seen_edges = set()
+
+
+    for i in range(len(path) - 1):
+
+        node_a = path[i]
+        node_b = path[i + 1]
+
+        edge_data = graph.get_edge_data(
+            node_a,
+            node_b,
+        )
+
+        if not edge_data:
+            continue
+
+
+        shortest_edge = min(
+            edge_data.values(),
+            key=lambda edge:
+                edge.get("length", 0),
+        )
+
+        edge_length_m = shortest_edge.get(
+            "length",
+            0,
+        )
+
+        total_distance_m += edge_length_m
+
+
+        # 方向を無視した道路区間
+        undirected_edge = tuple(
+            sorted(
+                (
+                    node_a,
+                    node_b,
+                )
+            )
+        )
+
+
+        # すでに同じ道路を通っているなら
+        # 折り返し距離としてカウント
+        if undirected_edge in seen_edges:
+            backtrack_distance_m += (
+                edge_length_m
+            )
+        else:
+            seen_edges.add(
+                undirected_edge
+            )
+
+
+    if total_distance_m == 0:
+        return 0.0
+
+
+    return (
+        backtrack_distance_m
+        / total_distance_m
     )
 
 def generate_multi_waypoint_route_candidates(
@@ -547,7 +679,7 @@ def generate_multi_waypoint_route_candidates(
         candidate_nodes=normalized_nodes,
         min_angle_difference=60.0,
         max_angle_difference=160.0,
-        max_pairs=40,
+        max_pairs=80,
     )
 
 
@@ -567,6 +699,7 @@ def generate_multi_waypoint_route_candidates(
                 start_node=start_node,
                 waypoint_a=waypoint_a,
                 waypoint_b=waypoint_b,
+                use_turn_aware=True,
             )
 
         except Exception as error:
@@ -632,9 +765,20 @@ def generate_multi_waypoint_route_candidates(
             )
         )
 
+        backtrack_ratio = (
+            calculate_backtrack_distance_ratio(
+                graph,
+                path,
+            )
+        )
+
 
         # 50%以上同じ道路なら除外
-        if overlap_ratio >= 0.50:
+        if overlap_ratio >= 0.20:
+            continue
+
+        # 折り返し距離が多すぎる候補を除外
+        if backtrack_ratio >= 0.15:
             continue
 
 
@@ -647,6 +791,71 @@ def generate_multi_waypoint_route_candidates(
                 graph,
                 path,
             )
+        )
+
+        turn_points = detect_turn_points(
+            coordinates
+        )
+
+        turn_count = len(turn_points)
+
+        if distance_km > 0:
+            turn_density = (
+                turn_count
+                / distance_km
+            )
+        else:
+            turn_density = 0.0
+
+        short_turn_interval_count = 0
+
+        SHORT_TURN_INTERVAL_M = 50
+
+        for i in range(
+            len(turn_points) - 1
+        ):
+
+            current_turn = turn_points[i]
+            next_turn = turn_points[i + 1]
+
+            interval_m = (
+                calculate_distance_between_points(
+                    current_turn["lat"],
+                    current_turn["lon"],
+                    next_turn["lat"],
+                    next_turn["lon"],
+                )
+            )
+
+            if (
+                interval_m
+                < SHORT_TURN_INTERVAL_M
+            ):
+                short_turn_interval_count += 1
+
+        # ---------------------------------
+        # 曲がりすぎるルートを除外
+        # ---------------------------------
+
+        MAX_TURN_DENSITY = 6.0
+        MAX_SHORT_TURN_INTERVALS = 4
+
+        if (
+            turn_density
+            > MAX_TURN_DENSITY
+        ):
+            continue
+
+        if (
+            short_turn_interval_count
+            > MAX_SHORT_TURN_INTERVALS
+        ):
+            continue
+
+        turn_penalty = (
+            turn_count * 2
+            + turn_density * 3
+            + short_turn_interval_count * 5
         )
 
 
@@ -713,6 +922,7 @@ def generate_multi_waypoint_route_candidates(
         total_score = (
             base_score
             + overlap_penalty
+            + turn_penalty
         )
 
 
@@ -741,6 +951,18 @@ def generate_multi_waypoint_route_candidates(
                         2,
                     ),
 
+                "turn_count":
+                    turn_count,
+
+                "turn_density":
+                    turn_density,
+
+                "short_turn_interval_count":
+                    short_turn_interval_count,
+
+                "turn_penalty":
+                    turn_penalty,
+
                 "path_nodes":
                     len(path),
 
@@ -752,6 +974,12 @@ def generate_multi_waypoint_route_candidates(
 
                 "overlap_ratio":
                     overlap_ratio,
+
+                "overlap_ratio":
+                    overlap_ratio,
+
+                "backtrack_ratio":
+                    backtrack_ratio,
 
                 "elevation_gain_m":
                     elevation_gain_m,
