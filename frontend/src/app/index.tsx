@@ -16,6 +16,13 @@ import MapView, {
 
 import * as Speech from "expo-speech";
 
+import AsyncStorage from "@react-native-async-storage/async-storage";
+
+import {
+  LOCATION_TASK_NAME,
+  BG_POINTS_KEY,
+} from "../services/backgroundLocation";
+
 type TurnPoint = {
   lat: number;
   lon: number;
@@ -74,11 +81,93 @@ export default function HomeScreen() {
   const [locationStatus, setLocationStatus] =
     useState("現在地未取得");
 
+  // =====================================
+  // 15.1 走行状態
+  // =====================================
+
+  type RunStatus =
+    | "idle"
+    | "running"
+    | "cancelled"
+    | "completed";
+
+  const [runStatus, setRunStatus] =
+    useState<RunStatus>("idle");
+
+  // =====================================
+  // 15.2 走行時間・実走行距離
+  // =====================================
+
+  // 走行時間（秒）
+  const [elapsedSeconds, setElapsedSeconds] =
+    useState(0);
+
+  // 実際に走行した距離（km）
+  const [runDistanceKm, setRunDistanceKm] =
+    useState(0);
+
+  // 走行開始時刻
+  const runStartTimeRef =
+    useRef<number | null>(null);
+
+  // 直前の有効なGPS座標と取得時刻
+  const previousRunLocationRef = useRef<{
+    latitude: number;
+    longitude: number;
+    timestamp: number;
+  } | null>(null);
+
+  // =====================================
+  // 15.2 走行タイマー
+  // =====================================
+
+  useEffect(() => {
+
+    if (runStatus !== "running") {
+      return;
+    }
+
+    const interval = setInterval(() => {
+
+      if (runStartTimeRef.current === null) {
+        return;
+      }
+
+      const elapsed = Math.floor(
+        (Date.now() - runStartTimeRef.current) / 1000
+      );
+
+      setElapsedSeconds(elapsed);
+
+    }, 1000);
+
+    return () => {
+      clearInterval(interval);
+    };
+
+  }, [runStatus]);
+
   const [currentTurnIndex, setCurrentTurnIndex] =
     useState(0);
 
   const activeCheckpointRef =
     useRef<number | "start" | null>(null);
+
+  // =====================================
+  // 15.3 周回完了判定用
+  // =====================================
+
+  // 次に順番どおり通過すべきチェックポイント
+  const nextExpectedCheckpointRef =
+    useRef(0);
+
+  // GOALへの到着を判定してよいか
+  const goalArmedRef =
+    useRef(false);
+
+  // 走行開始後、STARTから離れたか
+  const hasLeftStartRef =
+    useRef(false);
 
   const [distanceToTurn, setDistanceToTurn] =
     useState<number | null>(null);
@@ -149,6 +238,20 @@ export default function HomeScreen() {
 
   }, [currentLocation]);
 
+  const checkBackgroundGps = async () => {
+
+    const saved =
+      await AsyncStorage.getItem(BG_POINTS_KEY);
+
+    const points = saved ? JSON.parse(saved) : [];
+
+    console.log("BACKGROUND GPS RESULT", {
+      count: points.length,
+      first: points[0],
+      last: points[points.length - 1],
+    });
+  };
+
 
 
   useEffect(() => {
@@ -214,7 +317,99 @@ export default function HomeScreen() {
   const currentRoute =
     routes[selectedRouteIndex];
 
+  // =====================================
+  // 15.2 GPSによる実走行距離の計測
+  // =====================================
+
   useEffect(() => {
+
+    // 走行中以外は記録しない
+    if (
+      runStatus !== "running" ||
+      !currentLocation
+    ) {
+      return;
+    }
+
+    const now = Date.now();
+
+    const previous =
+      previousRunLocationRef.current;
+
+    // 最初のGPS地点を記録
+    if (!previous) {
+
+      previousRunLocationRef.current = {
+        ...currentLocation,
+        timestamp: now,
+      };
+
+      return;
+    }
+
+    // 前回の地点からの距離（m）
+    const movedMeters =
+      calculateDistanceMeters(
+        previous.latitude,
+        previous.longitude,
+        currentLocation.latitude,
+        currentLocation.longitude
+      );
+
+    // 経過時間（秒）
+    const timeDifference = Math.max(
+      (now - previous.timestamp) / 1000,
+      0.001
+    );
+
+    // 移動速度（m/s）
+    const speed =
+      movedMeters / timeDifference;
+
+    // 長時間GPSが更新されなかった場合や
+    // 不自然な移動があった場合は
+    // 基準地点を現在地に更新する
+    if (
+      timeDifference > 10 ||
+      movedMeters > 50 ||
+      speed > 8
+    ) {
+      previousRunLocationRef.current = {
+        ...currentLocation,
+        timestamp: now,
+      };
+
+      return;
+    }
+
+    // 4m未満の移動は蓄積しておく
+    if (movedMeters < 4) {
+      return;
+    }
+
+    // 実走行距離を加算
+    setRunDistanceKm(
+      (previousDistance) =>
+        previousDistance + movedMeters / 1000
+    );
+
+    // 次の比較用に現在地を保存
+    previousRunLocationRef.current = {
+      ...currentLocation,
+      timestamp: now,
+    };
+
+  }, [currentLocation, runStatus]);
+
+  // =====================================
+  // ナビゲーション用
+  // =====================================
+
+  useEffect(() => {
+
+    if (runStatus !== "running") {
+      return;
+    }
 
     if (!currentLocation) {
       return;
@@ -263,6 +458,13 @@ export default function HomeScreen() {
           routeStartLocation.latitude,
           routeStartLocation.longitude
         );
+    }
+
+    if (
+      distanceToStart !== null &&
+      distanceToStart > 30
+    ) {
+      hasLeftStartRef.current = true;
     }
 
 
@@ -365,39 +567,104 @@ export default function HomeScreen() {
 
     if (
       distanceToStart !== null &&
-      distanceToStart <=
-      ARRIVAL_DISTANCE &&
+      distanceToStart <= ARRIVAL_DISTANCE &&
       activeCheckpointRef.current === null
     ) {
 
-      activeCheckpointRef.current =
-        "start";
+      activeCheckpointRef.current = "start";
 
+      // =====================================
+      // 15.3 GOAL判定デバッグログ
+      // =====================================
 
-      // 全チェックポイント終了後ならGOAL
+      console.log("GOAL CHECK", {
+        currentTurnIndex,
+
+        totalTurns: turnPoints.length,
+
+        expected:
+          nextExpectedCheckpointRef.current,
+
+        goalArmed:
+          goalArmedRef.current,
+
+        hasLeftStart:
+          hasLeftStartRef.current,
+
+        distanceToStart,
+
+        activeCheckpoint:
+          activeCheckpointRef.current,
+
+        runStatus,
+      });
+
+      // ---------------------------------
+      // 1周完了
+      // ---------------------------------
+
       if (
-        currentTurnIndex >=
+        hasLeftStartRef.current &&
+        goalArmedRef.current &&
+        nextExpectedCheckpointRef.current ===
         turnPoints.length
       ) {
 
+        // 完了時刻を確定
+        if (runStartTimeRef.current !== null) {
+          setElapsedSeconds(
+            Math.floor(
+              (Date.now() -
+                runStartTimeRef.current) / 1000
+            )
+          );
+        }
+
+        // 計測を停止
+        runStartTimeRef.current = null;
+        previousRunLocationRef.current = null;
+
+        // ナビゲーションを停止
+        Vibration.cancel();
+        void Speech.stop();
+
+        setRunStatus("completed");
+
+        console.log("RUN COMPLETED", {
+          elapsedSeconds,
+          runDistanceKm,
+          currentTurnIndex,
+          expected: nextExpectedCheckpointRef.current,
+          totalTurns: turnPoints.length,
+        });
+
         setNavigationStatus(
-          "GOALに到着しました"
+          "1周完了！お疲れさまでした"
         );
 
         setDistanceToTurn(0);
 
+        goalArmedRef.current = false;
+
         return;
       }
 
+      // ---------------------------------
+      // 途中でSTARTへ戻った場合
+      // ---------------------------------
 
-      // 途中から逆走してSTARTへ戻った
       setCurrentTurnIndex(0);
-
       setVibratedTurnIndex(null);
+
+      // 順番の記録も最初から
+      nextExpectedCheckpointRef.current = 0;
+      goalArmedRef.current = false;
 
       setNavigationStatus(
         "START地点に戻りました"
       );
+
+      setDistanceToTurn(null);
 
       return;
     }
@@ -419,6 +686,44 @@ export default function HomeScreen() {
 
       activeCheckpointRef.current =
         reachedIndex;
+
+
+      // =====================================
+      // 15.3 順番どおりの到達履歴
+      // =====================================
+
+      const expectedIndex =
+        nextExpectedCheckpointRef.current;
+
+      if (reachedIndex === expectedIndex) {
+
+        // 期待していた次のCPに到達
+        nextExpectedCheckpointRef.current =
+          expectedIndex + 1;
+
+        // 最終CPまで順番どおり到達
+        if (
+          nextExpectedCheckpointRef.current ===
+          turnPoints.length
+        ) {
+          goalArmedRef.current = true;
+        }
+
+      } else if (
+        reachedIndex < expectedIndex - 1
+      ) {
+
+        // 前のCPへ戻ったので
+        // 順番の記録も戻す
+        nextExpectedCheckpointRef.current =
+          reachedIndex + 1;
+
+        goalArmedRef.current = false;
+      }
+
+      // 期待する番号より先のCPを踏んでも、
+      // 順番どおりの到達とはみなさない。
+
 
 
       // 例：
@@ -583,6 +888,7 @@ export default function HomeScreen() {
     currentTurnIndex,
     routeStartLocation,
     vibratedTurnIndex,
+    runStatus,
   ]);
 
   const [routeCoordinates, setRouteCoordinates] =
@@ -612,6 +918,10 @@ export default function HomeScreen() {
   const selectRoute = (
     index: number
   ) => {
+
+    if (runStatus === "running") {
+      return;
+    }
 
     const selectedRoute =
       routes[index];
@@ -688,6 +998,10 @@ export default function HomeScreen() {
 
 
   const fetchRoutes = async () => {
+    if (runStatus === "running") {
+      return;
+    }
+
     const requestStart =
       currentLocation ?? startLocation;
 
@@ -768,7 +1082,184 @@ export default function HomeScreen() {
   };
 
 
+  // =====================================
+  // 15.1 走行開始
+  // =====================================
 
+  const startRun = async () => {
+
+    if (
+      runStatus === "running" ||
+      !currentRoute ||
+      !currentLocation ||
+      !routeStartLocation
+    ) {
+      return;
+    }
+
+    // チェックポイントを初期化
+    setCurrentTurnIndex(0);
+    setDistanceToTurn(null);
+    setVibratedTurnIndex(null);
+
+    // START付近で開始する場合、
+    // GPSの揺れによる再入場を防ぐ
+    const distanceToStart =
+      calculateDistanceMeters(
+        currentLocation.latitude,
+        currentLocation.longitude,
+        routeStartLocation.latitude,
+        routeStartLocation.longitude
+      );
+
+    activeCheckpointRef.current =
+      distanceToStart <= 20
+        ? "start"
+        : null;
+
+    // 既存の通知をクリア
+    Vibration.cancel();
+    void Speech.stop();
+
+    // 走行計測を初期化
+    setElapsedSeconds(0);
+    setRunDistanceKm(0);
+
+    // 開始時刻を記録
+    const now = Date.now();
+    runStartTimeRef.current = now;
+
+    // 走行開始位置を記録
+    previousRunLocationRef.current = {
+      latitude: currentLocation.latitude,
+      longitude: currentLocation.longitude,
+      timestamp: now,
+    };
+
+    // 最初のチェックポイントから記録
+    nextExpectedCheckpointRef.current = 0;
+
+    // GOAL判定はまだ無効
+    goalArmedRef.current = false;
+
+    // STARTから離れていない
+    hasLeftStartRef.current = false;
+
+
+    // バックグラウンド位置情報の許可
+    const permission =
+      await Location.requestBackgroundPermissionsAsync();
+
+    if (permission.status !== "granted") {
+      setNavigationStatus(
+        "バックグラウンド位置情報の許可が必要です"
+      );
+      return;
+    }
+
+    try {
+      // 前回のGPS記録を初期化
+      await AsyncStorage.setItem(
+        BG_POINTS_KEY,
+        JSON.stringify([])
+      );
+
+      const alreadyStarted =
+        await Location.hasStartedLocationUpdatesAsync(
+          LOCATION_TASK_NAME
+        );
+
+      if (!alreadyStarted) {
+        await Location.startLocationUpdatesAsync(
+          LOCATION_TASK_NAME,
+          {
+            accuracy: Location.Accuracy.High,
+            distanceInterval: 5,
+            activityType: Location.ActivityType.Fitness,
+            pausesUpdatesAutomatically: false,
+            showsBackgroundLocationIndicator: true,
+            foregroundService: {
+              notificationTitle: "ランニング記録中",
+              notificationBody:
+                "位置情報を記録しています",
+            },
+          }
+        );
+      }
+
+    } catch (error) {
+      console.error("BG GPS START ERROR", error);
+      setNavigationStatus(
+        "GPSのバックグラウンド追跡開始に失敗"
+      );
+      return;
+    }
+
+
+    // 走行開始
+    setRunStatus("running");
+    setNavigationStatus("走行中");
+
+    // 詳細パネルを閉じる
+    setIsPanelExpanded(false);
+  };
+
+
+  // =====================================
+  // 15.1 走行中止
+  // =====================================
+
+  const cancelRun = async () => {
+
+    if (runStatus !== "running") {
+      return;
+    }
+
+    // 中止時点の経過時間を確定
+    if (runStartTimeRef.current !== null) {
+
+      setElapsedSeconds(
+        Math.floor(
+          (Date.now() - runStartTimeRef.current) / 1000
+        )
+      );
+    }
+
+    // 計測用Refをリセット
+    runStartTimeRef.current = null;
+    previousRunLocationRef.current = null;
+
+    setRunStatus("cancelled");
+
+    const started =
+      await Location.hasStartedLocationUpdatesAsync(
+        LOCATION_TASK_NAME
+      );
+
+    if (started) {
+      await Location.stopLocationUpdatesAsync(
+        LOCATION_TASK_NAME
+      );
+    }
+
+    goalArmedRef.current = false;
+    nextExpectedCheckpointRef.current = 0;
+    hasLeftStartRef.current = false;
+
+    // 振動・音声を停止
+    Vibration.cancel();
+    void Speech.stop();
+
+    setDistanceToTurn(null);
+    setVibratedTurnIndex(null);
+
+    // チェックポイントの入場状態を解除
+    activeCheckpointRef.current = null;
+
+    setNavigationStatus(
+      "走行を中止しました"
+    );
+  };
 
 
   return (
@@ -861,6 +1352,11 @@ export default function HomeScreen() {
             {navigationStatus}
           </Text>
 
+          <Button
+            title="バックグラウンドGPS確認"
+            onPress={checkBackgroundGps}
+          />
+
           <View style={styles.navigationRow}>
 
             {/* 案内ポイント */}
@@ -890,13 +1386,110 @@ export default function HomeScreen() {
             {locationStatus}
           </Text>
 
+          {/* =====================================
+    15.2 ランニング情報
+===================================== */}
+
+          <View style={styles.runStatsContainer}>
+
+            <View style={styles.runStatItem}>
+              <Text style={styles.runStatLabel}>
+                走行時間
+              </Text>
+
+              <Text style={styles.runStatValue}>
+                {formatRunTime(elapsedSeconds)}
+              </Text>
+            </View>
+
+            <View style={styles.runStatItem}>
+              <Text style={styles.runStatLabel}>
+                実走行距離
+              </Text>
+
+              <Text style={styles.runStatValue}>
+                {runDistanceKm.toFixed(2)} km
+              </Text>
+            </View>
+
+            <View style={styles.runStatItem}>
+              <Text style={styles.runStatLabel}>
+                平均ペース
+              </Text>
+
+              <Text style={styles.runStatValue}>
+                {formatAveragePace(
+                  elapsedSeconds,
+                  runDistanceKm
+                )}
+              </Text>
+            </View>
+
+          </View>
+
+          {/* =========================
+    15.1 走行開始・中止
+========================= */}
+
+          <View style={styles.runButtonContainer}>
+
+            {runStatus === "completed" ? (
+
+              <View style={styles.runButton}>
+                <Text style={styles.completedRunText}>
+                  ✓ 1周完了！
+                </Text>
+              </View>
+
+            ) : runStatus === "running" ? (
+
+              <Pressable
+                onPress={cancelRun}
+                style={[
+                  styles.runButton,
+                  styles.cancelRunButton,
+                ]}
+              >
+                <Text style={styles.runButtonText}>
+                  ■ 走行中止
+                </Text>
+              </Pressable>
+
+            ) : (
+
+              <Pressable
+                onPress={startRun}
+                disabled={
+                  !currentRoute ||
+                  !currentLocation ||
+                  !routeStartLocation
+                }
+                style={[
+                  styles.runButton,
+                  styles.startRunButton,
+
+                  (!currentRoute ||
+                    !currentLocation ||
+                    !routeStartLocation) &&
+                  styles.disabledRunButton,
+                ]}
+              >
+                <Text style={styles.runButtonText}>
+                  ▶ 走行開始
+                </Text>
+              </Pressable>
+
+            )}
+
+          </View>
+
         </View>
 
 
         {/* =========================
           展開時のみ表示
       ========================== */}
-        {isPanelExpanded && (
+        {isPanelExpanded && runStatus !== "running" && (
 
           <View style={styles.panelDetails}>
 
@@ -1092,6 +1685,60 @@ type PriorityButtonProps = {
   selected: boolean;
   onPress: () => void;
 };
+
+// =====================================
+// 秒数を HH:MM:SS に変換
+// =====================================
+
+function formatRunTime(totalSeconds: number) {
+
+  const hours =
+    Math.floor(totalSeconds / 3600);
+
+  const minutes =
+    Math.floor((totalSeconds % 3600) / 60);
+
+  const seconds =
+    totalSeconds % 60;
+
+  return [
+    hours,
+    minutes,
+    seconds,
+  ]
+    .map((value) =>
+      String(value).padStart(2, "0")
+    )
+    .join(":");
+}
+
+
+// =====================================
+// 平均ペース表示
+// =====================================
+
+function formatAveragePace(
+  seconds: number,
+  distanceKm: number
+) {
+
+  if (distanceKm < 0.05) {
+    return "--";
+  }
+
+  const paceSeconds =
+    Math.round(seconds / distanceKm);
+
+  const minutes =
+    Math.floor(paceSeconds / 60);
+
+  const remainingSeconds =
+    paceSeconds % 60;
+
+  return (
+    `${minutes}'${String(remainingSeconds).padStart(2, "0")}"/km`
+  );
+}
 
 
 function PriorityButton({
@@ -1358,6 +2005,69 @@ const styles = StyleSheet.create({
 
   selectedRouteButtonText: {
     color: "white",
+  },
+
+  runButtonContainer: {
+    marginTop: 12,
+  },
+
+  runButton: {
+    paddingVertical: 14,
+    borderRadius: 12,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+
+  startRunButton: {
+    backgroundColor: "#16A34A",
+  },
+
+  cancelRunButton: {
+    backgroundColor: "#DC2626",
+  },
+
+  disabledRunButton: {
+    backgroundColor: "#9CA3AF",
+  },
+
+  runButtonText: {
+    color: "#FFFFFF",
+    fontSize: 17,
+    fontWeight: "bold",
+  },
+
+  runStatsContainer: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    marginTop: 12,
+    paddingVertical: 10,
+    paddingHorizontal: 8,
+    backgroundColor: "#F3F4F6",
+    borderRadius: 12,
+  },
+
+  runStatItem: {
+    flex: 1,
+    alignItems: "center",
+  },
+
+  runStatLabel: {
+    fontSize: 11,
+    color: "#6B7280",
+    marginBottom: 4,
+  },
+
+  runStatValue: {
+    fontSize: 14,
+    fontWeight: "bold",
+    color: "#111827",
+  },
+
+  completedRunText: {
+    color: "#16A34A",
+    fontSize: 18,
+    fontWeight: "bold",
+    textAlign: "center",
   },
 
 });
