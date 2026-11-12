@@ -61,6 +61,31 @@ export default function HomeScreen() {
     longitude: 140.0206,
   };
 
+
+  const testLocation = async () => {
+    try {
+      const permission =
+        await Location.getForegroundPermissionsAsync();
+
+      console.log("GPS PERMISSION:", permission);
+
+      const lastLocation =
+        await Location.getLastKnownPositionAsync();
+
+      console.log("LAST LOCATION:", lastLocation);
+
+      const currentLocation =
+        await Location.getCurrentPositionAsync({
+          accuracy: Location.Accuracy.Balanced,
+        });
+
+      console.log("CURRENT LOCATION:", currentLocation);
+    } catch (error) {
+      console.error("GPS TEST ERROR:", error);
+    }
+  };
+
+
   const [currentLocation, setCurrentLocation] =
     useState<{
       latitude: number;
@@ -226,6 +251,8 @@ export default function HomeScreen() {
         rate: 0.9,
         pitch: 1.0,
         volume: 1.0,
+
+        useApplicationAudioSession: false,
       }
     );
   };
@@ -265,6 +292,28 @@ export default function HomeScreen() {
       last: points[points.length - 1],
     });
   };
+
+  
+const stopBackgroundGps = async () => {
+  try {
+    const started =
+      await Location.hasStartedLocationUpdatesAsync(
+        LOCATION_TASK_NAME
+      );
+
+    if (started) {
+      await Location.stopLocationUpdatesAsync(
+        LOCATION_TASK_NAME
+      );
+    }
+
+    console.log("BG GPS STOPPED");
+
+  } catch (error) {
+    console.error("BG GPS STOP ERROR", error);
+  }
+};
+
 
 
 
@@ -1217,53 +1266,53 @@ export default function HomeScreen() {
 
 
     // バックグラウンド位置情報の許可
-    // const permission =
-    //   await Location.requestBackgroundPermissionsAsync();
+    const permission =
+      await Location.requestBackgroundPermissionsAsync();
 
-    // if (permission.status !== "granted") {
-    //   setNavigationStatus(
-    //     "バックグラウンド位置情報の許可が必要です"
-    //   );
-    //   return;
-    // }
+    if (permission.status !== "granted") {
+      setNavigationStatus(
+        "バックグラウンド位置情報の許可が必要です"
+      );
+      return;
+    }
 
-    // try {
-    //   // 前回のGPS記録を初期化
-    //   await AsyncStorage.setItem(
-    //     BG_POINTS_KEY,
-    //     JSON.stringify([])
-    //   );
+    try {
+      // 前回のGPS記録を初期化
+      await AsyncStorage.setItem(
+        BG_POINTS_KEY,
+        JSON.stringify([])
+      );
 
-    //   const alreadyStarted =
-    //     await Location.hasStartedLocationUpdatesAsync(
-    //       LOCATION_TASK_NAME
-    //     );
+      const alreadyStarted =
+        await Location.hasStartedLocationUpdatesAsync(
+          LOCATION_TASK_NAME
+        );
 
-    //   if (!alreadyStarted) {
-    //     await Location.startLocationUpdatesAsync(
-    //       LOCATION_TASK_NAME,
-    //       {
-    //         accuracy: Location.Accuracy.High,
-    //         distanceInterval: 5,
-    //         activityType: Location.ActivityType.Fitness,
-    //         pausesUpdatesAutomatically: false,
-    //         showsBackgroundLocationIndicator: true,
-    //         foregroundService: {
-    //           notificationTitle: "ランニング記録中",
-    //           notificationBody:
-    //             "位置情報を記録しています",
-    //         },
-    //       }
-    //     );
-    //   }
+      if (!alreadyStarted) {
+        await Location.startLocationUpdatesAsync(
+          LOCATION_TASK_NAME,
+          {
+            accuracy: Location.Accuracy.High,
+            distanceInterval: 5,
+            activityType: Location.ActivityType.Fitness,
+            pausesUpdatesAutomatically: false,
+            showsBackgroundLocationIndicator: true,
+            foregroundService: {
+              notificationTitle: "ランニング記録中",
+              notificationBody:
+                "位置情報を記録しています",
+            },
+          }
+        );
+      }
 
-    // } catch (error) {
-    //   console.error("BG GPS START ERROR", error);
-    //   setNavigationStatus(
-    //     "GPSのバックグラウンド追跡開始に失敗"
-    //   );
-    //   return;
-    // }
+    } catch (error) {
+      console.error("BG GPS START ERROR", error);
+      setNavigationStatus(
+        "GPSのバックグラウンド追跡開始に失敗"
+      );
+      return;
+    }
 
 
     // 走行開始
@@ -1301,16 +1350,7 @@ export default function HomeScreen() {
 
     setRunStatus("cancelled");
 
-    // const started =
-    //   await Location.hasStartedLocationUpdatesAsync(
-    //     LOCATION_TASK_NAME
-    //   );
-
-    // if (started) {
-    //   await Location.stopLocationUpdatesAsync(
-    //     LOCATION_TASK_NAME
-    //   );
-    // }
+    await stopBackgroundGps();
 
     goalArmedRef.current = false;
     nextExpectedCheckpointRef.current = 0;
@@ -1395,6 +1435,9 @@ export default function HomeScreen() {
     // 通知を停止
     Vibration.cancel();
     void Speech.stop();
+    void stopBackgroundGps();
+
+    void stopBackgroundGps();
 
     // 画面の案内番号を最終状態にする
     if (currentRoute) {
@@ -1666,6 +1709,11 @@ export default function HomeScreen() {
           <Button
             title="バックグラウンドGPS確認"
             onPress={checkBackgroundGps}
+          />
+
+          <Button
+            title="GPS取得テスト"
+            onPress={testLocation}
           />
 
           <View style={styles.navigationRow}>
