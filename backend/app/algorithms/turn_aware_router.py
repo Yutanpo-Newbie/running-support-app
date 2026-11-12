@@ -114,6 +114,8 @@ def shortest_turn_aware_path(
     used_edges=None,
     reuse_penalty_factor=5.0,
     max_states=100000,
+    initial_prev_node=None,
+    avoid_steps=False,
 ):
     """
     曲がりにくさを考慮したDijkstra法。
@@ -132,7 +134,7 @@ def shortest_turn_aware_path(
     if used_edges is None:
         used_edges = set()
 
-    start_state = (None, start_node)
+    start_state = (initial_prev_node, start_node)
 
     distances = {start_state: 0.0}
     previous_states = {}
@@ -173,11 +175,63 @@ def shortest_turn_aware_path(
 
         for next_node in graph.successors(current_node):
 
+
+            # =====================================
+            # 16.6.7 探索開始直後の逆走を禁止
+            # =====================================
+
+            if (
+                state == start_state
+                and initial_prev_node is not None
+                and next_node == initial_prev_node
+            ):
+                continue
+
             edge_length = get_edge_length(
                 graph,
                 current_node,
                 next_node,
             )
+
+
+            # =====================================
+            # 16.7.2.2 階段道路の探索禁止
+            # =====================================
+
+            if avoid_steps:
+
+                edge_data = graph.get_edge_data(
+                    current_node,
+                    next_node,
+                )
+
+                if edge_data:
+
+                    # 現在の距離計算と同じく
+                    # 最短エッジを評価対象にする
+                    shortest_edge = min(
+                        edge_data.values(),
+                        key=lambda data: float(
+                            data.get("length", float("inf"))
+                        ),
+                    )
+
+                    highway = shortest_edge.get(
+                        "highway", []
+                    )
+
+                    if isinstance(highway, str):
+                        highway_types = [highway]
+                    elif isinstance(
+                        highway, (list, tuple, set)
+                    ):
+                        highway_types = highway
+                    else:
+                        highway_types = []
+
+                    if "steps" in highway_types:
+                        continue
+
 
             if edge_length is None:
                 continue

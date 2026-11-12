@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import * as Location from "expo-location";
 import {
   Button,
+  Modal,
   Pressable,
   StyleSheet,
   Text,
@@ -105,6 +106,19 @@ export default function HomeScreen() {
   // 実際に走行した距離（km）
   const [runDistanceKm, setRunDistanceKm] =
     useState(0);
+
+  // =====================================
+  // 15.4 GPS走行軌跡
+  // =====================================
+
+  const [runTrack, setRunTrack] = useState<
+    {
+      latitude: number;
+      longitude: number;
+    }[]
+  >([]);
+
+  const resultMapRef = useRef<MapView>(null);
 
   // 走行開始時刻
   const runStartTimeRef =
@@ -316,6 +330,54 @@ export default function HomeScreen() {
 
   const currentRoute =
     routes[selectedRouteIndex];
+
+
+  // =====================================
+  // 15.4 GPS走行軌跡の記録
+  // =====================================
+
+  useEffect(() => {
+
+    if (
+      runStatus !== "running" ||
+      !currentLocation
+    ) {
+      return;
+    }
+
+    setRunTrack((previousTrack) => {
+
+      // 最初のGPS位置
+      if (previousTrack.length === 0) {
+        return [currentLocation];
+      }
+
+      const lastPoint =
+        previousTrack[previousTrack.length - 1];
+
+      const movedMeters =
+        calculateDistanceMeters(
+          lastPoint.latitude,
+          lastPoint.longitude,
+          currentLocation.latitude,
+          currentLocation.longitude
+        );
+
+      // 同一地点付近の重複データを除外
+      if (movedMeters < 3) {
+        return previousTrack;
+      }
+
+      // 新しいGPS座標を追加
+      return [
+        ...previousTrack,
+        currentLocation,
+      ];
+
+    });
+
+  }, [currentLocation, runStatus]);
+
 
   // =====================================
   // 15.2 GPSによる実走行距離の計測
@@ -1125,6 +1187,14 @@ export default function HomeScreen() {
     setElapsedSeconds(0);
     setRunDistanceKm(0);
 
+    // 前回のGPS軌跡を消去
+    setRunTrack([
+      {
+        latitude: currentLocation.latitude,
+        longitude: currentLocation.longitude,
+      },
+    ]);
+
     // 開始時刻を記録
     const now = Date.now();
     runStartTimeRef.current = now;
@@ -1147,53 +1217,53 @@ export default function HomeScreen() {
 
 
     // バックグラウンド位置情報の許可
-    const permission =
-      await Location.requestBackgroundPermissionsAsync();
+    // const permission =
+    //   await Location.requestBackgroundPermissionsAsync();
 
-    if (permission.status !== "granted") {
-      setNavigationStatus(
-        "バックグラウンド位置情報の許可が必要です"
-      );
-      return;
-    }
+    // if (permission.status !== "granted") {
+    //   setNavigationStatus(
+    //     "バックグラウンド位置情報の許可が必要です"
+    //   );
+    //   return;
+    // }
 
-    try {
-      // 前回のGPS記録を初期化
-      await AsyncStorage.setItem(
-        BG_POINTS_KEY,
-        JSON.stringify([])
-      );
+    // try {
+    //   // 前回のGPS記録を初期化
+    //   await AsyncStorage.setItem(
+    //     BG_POINTS_KEY,
+    //     JSON.stringify([])
+    //   );
 
-      const alreadyStarted =
-        await Location.hasStartedLocationUpdatesAsync(
-          LOCATION_TASK_NAME
-        );
+    //   const alreadyStarted =
+    //     await Location.hasStartedLocationUpdatesAsync(
+    //       LOCATION_TASK_NAME
+    //     );
 
-      if (!alreadyStarted) {
-        await Location.startLocationUpdatesAsync(
-          LOCATION_TASK_NAME,
-          {
-            accuracy: Location.Accuracy.High,
-            distanceInterval: 5,
-            activityType: Location.ActivityType.Fitness,
-            pausesUpdatesAutomatically: false,
-            showsBackgroundLocationIndicator: true,
-            foregroundService: {
-              notificationTitle: "ランニング記録中",
-              notificationBody:
-                "位置情報を記録しています",
-            },
-          }
-        );
-      }
+    //   if (!alreadyStarted) {
+    //     await Location.startLocationUpdatesAsync(
+    //       LOCATION_TASK_NAME,
+    //       {
+    //         accuracy: Location.Accuracy.High,
+    //         distanceInterval: 5,
+    //         activityType: Location.ActivityType.Fitness,
+    //         pausesUpdatesAutomatically: false,
+    //         showsBackgroundLocationIndicator: true,
+    //         foregroundService: {
+    //           notificationTitle: "ランニング記録中",
+    //           notificationBody:
+    //             "位置情報を記録しています",
+    //         },
+    //       }
+    //     );
+    //   }
 
-    } catch (error) {
-      console.error("BG GPS START ERROR", error);
-      setNavigationStatus(
-        "GPSのバックグラウンド追跡開始に失敗"
-      );
-      return;
-    }
+    // } catch (error) {
+    //   console.error("BG GPS START ERROR", error);
+    //   setNavigationStatus(
+    //     "GPSのバックグラウンド追跡開始に失敗"
+    //   );
+    //   return;
+    // }
 
 
     // 走行開始
@@ -1231,16 +1301,16 @@ export default function HomeScreen() {
 
     setRunStatus("cancelled");
 
-    const started =
-      await Location.hasStartedLocationUpdatesAsync(
-        LOCATION_TASK_NAME
-      );
+    // const started =
+    //   await Location.hasStartedLocationUpdatesAsync(
+    //     LOCATION_TASK_NAME
+    //   );
 
-    if (started) {
-      await Location.stopLocationUpdatesAsync(
-        LOCATION_TASK_NAME
-      );
-    }
+    // if (started) {
+    //   await Location.stopLocationUpdatesAsync(
+    //     LOCATION_TASK_NAME
+    //   );
+    // }
 
     goalArmedRef.current = false;
     nextExpectedCheckpointRef.current = 0;
@@ -1260,6 +1330,89 @@ export default function HomeScreen() {
       "走行を中止しました"
     );
   };
+
+
+  // =====================================
+  // 15.4 結果画面を閉じる
+  // =====================================
+
+  const closeResult = () => {
+
+    // 通常のルート選択画面へ戻る
+    setRunStatus("idle");
+
+    // ナビ状態を初期化
+    setCurrentTurnIndex(0);
+    setDistanceToTurn(null);
+    setVibratedTurnIndex(null);
+
+    // チェックポイント判定を初期化
+    activeCheckpointRef.current = null;
+
+    nextExpectedCheckpointRef.current = 0;
+    goalArmedRef.current = false;
+    hasLeftStartRef.current = false;
+
+    // 計測用Refを初期化
+    runStartTimeRef.current = null;
+    previousRunLocationRef.current = null;
+
+    Vibration.cancel();
+    void Speech.stop();
+
+    // ルートは維持して再走行可能にする
+    setNavigationStatus(
+      "ルート取得済み・走行待機中"
+    );
+
+    setIsPanelExpanded(false);
+  };
+
+
+  // =====================================
+  // 開発用：1周完了を強制実行
+  // =====================================
+
+  const completeRunForTest = () => {
+
+    if (runStatus !== "running") {
+      return;
+    }
+
+    // 経過時間を確定
+    if (runStartTimeRef.current !== null) {
+      setElapsedSeconds(
+        Math.floor(
+          (Date.now() - runStartTimeRef.current) / 1000
+        )
+      );
+    }
+
+    // 計測を停止
+    runStartTimeRef.current = null;
+    previousRunLocationRef.current = null;
+
+    // 通知を停止
+    Vibration.cancel();
+    void Speech.stop();
+
+    // 画面の案内番号を最終状態にする
+    if (currentRoute) {
+      setCurrentTurnIndex(
+        currentRoute.turn_points.length
+      );
+    }
+
+    setDistanceToTurn(0);
+    setNavigationStatus(
+      "1周完了！お疲れさまでした"
+    );
+
+    // 結果パネルを開く
+    setRunStatus("completed");
+  };
+
+
 
 
   return (
@@ -1310,6 +1463,7 @@ export default function HomeScreen() {
       </MapView>
 
 
+
       {/* =========================
         BOTTOM PANEL
     ========================== */}
@@ -1341,6 +1495,163 @@ export default function HomeScreen() {
           </Text>
 
         </Pressable>
+
+
+        {/* =====================================
+          15.4 ランニング結果画面
+      ===================================== */}
+
+        <Modal
+          visible={runStatus === "completed"}
+          animationType="slide"
+          presentationStyle="fullScreen"
+          onRequestClose={closeResult}
+        >
+          <View style={styles.resultScreen}>
+
+            <Text style={styles.resultTitle}>
+              ランニング結果
+            </Text>
+
+            <Text style={styles.resultMessage}>
+              1周完了！お疲れさまでした
+            </Text>
+
+            {/* 結果地図 */}
+            <View style={styles.resultMapContainer}>
+
+              <MapView
+                ref={resultMapRef}
+                style={styles.resultMap}
+                initialRegion={{
+                  latitude:
+                    routeCoordinates[0]?.latitude ??
+                    currentLocation?.latitude ??
+                    startLocation.latitude,
+
+                  longitude:
+                    routeCoordinates[0]?.longitude ??
+                    currentLocation?.longitude ??
+                    startLocation.longitude,
+
+                  latitudeDelta: 0.015,
+                  longitudeDelta: 0.015,
+                }}
+                onMapReady={() => {
+                  const points = [
+                    ...routeCoordinates,
+                    ...runTrack,
+                  ];
+
+                  if (points.length >= 2) {
+                    resultMapRef.current?.fitToCoordinates(
+                      points,
+                      {
+                        edgePadding: {
+                          top: 45,
+                          right: 35,
+                          bottom: 45,
+                          left: 35,
+                        },
+                        animated: false,
+                      }
+                    );
+                  }
+                }}
+              >
+
+                {/* 提案されたルート：青 */}
+                {routeCoordinates.length >= 2 && (
+                  <Polyline
+                    coordinates={routeCoordinates}
+                    strokeColor="#2563EB"
+                    strokeWidth={4}
+                  />
+                )}
+
+                {/* 実際のGPS走行軌跡：緑 */}
+                {runTrack.length >= 2 && (
+                  <Polyline
+                    coordinates={runTrack}
+                    strokeColor="#16A34A"
+                    strokeWidth={5}
+                  />
+                )}
+
+                {/* START / GOAL */}
+                {routeStartLocation && (
+                  <Marker
+                    coordinate={routeStartLocation}
+                    title="START / GOAL"
+                    pinColor="green"
+                  />
+                )}
+
+              </MapView>
+
+            </View>
+
+            <View style={styles.resultLegend}>
+              <Text style={styles.resultLegendText}>
+                🔵 提案ルート
+              </Text>
+
+              <Text style={styles.resultLegendText}>
+                🟢 GPS走行軌跡
+              </Text>
+            </View>
+
+            {/* 走行記録 */}
+            <View style={styles.resultStats}>
+
+              <View style={styles.resultStatItem}>
+                <Text style={styles.resultStatLabel}>
+                  走行時間
+                </Text>
+
+                <Text style={styles.resultStatValue}>
+                  {formatRunTime(elapsedSeconds)}
+                </Text>
+              </View>
+
+              <View style={styles.resultStatItem}>
+                <Text style={styles.resultStatLabel}>
+                  実走行距離
+                </Text>
+
+                <Text style={styles.resultStatValue}>
+                  {runDistanceKm.toFixed(2)} km
+                </Text>
+              </View>
+
+              <View style={styles.resultStatItem}>
+                <Text style={styles.resultStatLabel}>
+                  平均ペース
+                </Text>
+
+                <Text style={styles.resultStatValue}>
+                  {formatAveragePace(
+                    elapsedSeconds,
+                    runDistanceKm
+                  )}
+                </Text>
+              </View>
+
+            </View>
+
+            {/* 閉じるボタン */}
+            <Pressable
+              style={styles.closeResultButton}
+              onPress={closeResult}
+            >
+              <Text style={styles.closeResultText}>
+                閉じてルート選択に戻る
+              </Text>
+            </Pressable>
+
+          </View>
+        </Modal>
+
 
 
         {/* =========================
@@ -1482,6 +1793,20 @@ export default function HomeScreen() {
             )}
 
           </View>
+
+          {/* 開発者専用：強制ゴール */}
+          {__DEV__ && runStatus === "running" && (
+
+            <Pressable
+              style={styles.testCompleteButton}
+              onPress={completeRunForTest}
+            >
+              <Text style={styles.testCompleteButtonText}>
+                🧪 テスト：1周完了
+              </Text>
+            </Pressable>
+
+          )}
 
         </View>
 
@@ -2069,6 +2394,118 @@ const styles = StyleSheet.create({
     fontWeight: "bold",
     textAlign: "center",
   },
+
+
+  // =====================================
+  // 15.4 ランニング結果画面
+  // =====================================
+
+  resultScreen: {
+    flex: 1,
+    backgroundColor: "#FFFFFF",
+    paddingTop: 65,
+    paddingHorizontal: 20,
+    paddingBottom: 30,
+  },
+
+  resultTitle: {
+    fontSize: 24,
+    fontWeight: "bold",
+    color: "#111827",
+    textAlign: "center",
+    marginBottom: 10,
+  },
+
+  resultMessage: {
+    fontSize: 19,
+    fontWeight: "bold",
+    color: "#16A34A",
+    textAlign: "center",
+    marginBottom: 20,
+  },
+
+  resultMapContainer: {
+    height: 280,
+    borderRadius: 16,
+    overflow: "hidden",
+    backgroundColor: "#E5E7EB",
+  },
+
+  resultMap: {
+    width: "100%",
+    height: "100%",
+  },
+
+  resultLegend: {
+    flexDirection: "row",
+    justifyContent: "center",
+    gap: 20,
+    marginTop: 12,
+    marginBottom: 24,
+  },
+
+  resultLegendText: {
+    fontSize: 13,
+    color: "#4B5563",
+  },
+
+  resultStats: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    paddingVertical: 22,
+    paddingHorizontal: 8,
+    backgroundColor: "#F3F4F6",
+    borderRadius: 14,
+  },
+
+  resultStatItem: {
+    flex: 1,
+    alignItems: "center",
+  },
+
+  resultStatLabel: {
+    fontSize: 12,
+    color: "#6B7280",
+    marginBottom: 8,
+  },
+
+  resultStatValue: {
+    fontSize: 15,
+    fontWeight: "bold",
+    color: "#111827",
+  },
+
+  closeResultButton: {
+    marginTop: "auto",
+    backgroundColor: "#2563EB",
+    borderRadius: 14,
+    paddingVertical: 17,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+
+  closeResultText: {
+    color: "#FFFFFF",
+    fontSize: 16,
+    fontWeight: "bold",
+  },
+
+  testCompleteButton: {
+    marginTop: 10,
+    paddingVertical: 12,
+    borderRadius: 12,
+    backgroundColor: "#EDE9FE",
+    borderWidth: 1,
+    borderColor: "#A78BFA",
+    alignItems: "center",
+  },
+
+  testCompleteButtonText: {
+    fontSize: 13,
+    fontWeight: "bold",
+    color: "#6D28D9",
+  },
+
 
 });
 
