@@ -44,7 +44,7 @@
       [
         "expo-location",
         {
-          "isIosBackgroundLocationEnabled": true,
+          "isIosBackgroundLocationEnabled": false,
           "locationWhenInUsePermission": "走行中の現在地とルート案内に位置情報を使用します。",
           "locationAlwaysAndWhenInUsePermission": "画面ロック中もランニングの走行記録とナビゲーションを継続するため、位置情報を使用します。"
         }

@@ -141,6 +141,14 @@ def generate_mock_routes(request: RouteRequest) -> list[RouteCandidate]:
     return route_candidates
 
 def generate_osmnx_routes(request: RouteRequest) -> list[RouteCandidate]:
+
+    print("=== ROUTE DEBUG START ===", flush=True)
+    print(
+        "request distance:",
+        request.distance_km,
+        flush=True,
+    )
+
     """
     OSMnxを使って、実道路ネットワーク上のルート候補を生成する。
     現段階では start → candidate → start の往復型ルートを返す。
@@ -176,7 +184,14 @@ def generate_osmnx_routes(request: RouteRequest) -> list[RouteCandidate]:
         start_node=start_node,
         target_distance_m=target_waypoint_distance_m,
         tolerance_m=300,
-        max_candidates=20,
+        max_candidates=40,
+        avoid_steps=True,
+    )
+
+    print(
+        "CANDIDATE NODES:",
+        len(candidate_nodes),
+        flush=True,
     )
 
     osm_route_candidates = (
@@ -188,6 +203,12 @@ def generate_osmnx_routes(request: RouteRequest) -> list[RouteCandidate]:
             preferences=request.preferences,
             max_routes=3,
         )
+    )
+
+    print(
+        "WAYPOINT CANDIDATES:",
+        len(osm_route_candidates),
+        flush=True,
     )
 
     routes: list[RouteCandidate] = []
