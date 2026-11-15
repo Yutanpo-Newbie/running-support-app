@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import * as Location from "expo-location";
 import {
   Button,
@@ -16,6 +16,7 @@ import MapView, {
 } from "react-native-maps";
 
 import * as Speech from "expo-speech";
+import * as TaskManager from "expo-task-manager";
 
 import AsyncStorage from "@react-native-async-storage/async-storage";
 
@@ -54,6 +55,111 @@ type RoutePriority =
 
 
 export default function HomeScreen() {
+    
+  type GeoPoint = {
+    latitude: number;
+    longitude: number;
+  };
+
+  type RouteDeviationStats = {
+    averageM: number;
+    maxM: number;
+    over20mPercent: number;
+    pointCount: number;
+  };
+
+  // GPS点からルートの各線分までの最短距離
+  const calculateDeviationStats = (
+    gpsPoints: GeoPoint[],
+    routePoints: GeoPoint[],
+  ): RouteDeviationStats | null => {
+    if (
+      gpsPoints.length === 0 ||
+      routePoints.length < 2
+    ) {
+      return null;
+    }
+
+    const earthRadius = 6371000;
+
+    const referenceLat =
+      routePoints.reduce(
+        (sum, point) => sum + point.latitude,
+        0,
+      ) / routePoints.length;
+
+    const latRad = referenceLat * Math.PI / 180;
+
+    // 緯度経度をローカル平面座標（m）に変換
+    const toXY = (point: GeoPoint) => ({
+      x:
+        earthRadius *
+        (point.longitude * Math.PI / 180) *
+        Math.cos(latRad),
+      y:
+        earthRadius *
+        (point.latitude * Math.PI / 180),
+    });
+
+    const routeXY = routePoints.map(toXY);
+
+    const deviations = gpsPoints.map((point) => {
+      const p = toXY(point);
+      let minDistance = Infinity;
+
+      for (let i = 0; i < routeXY.length - 1; i++) {
+        const a = routeXY[i];
+        const b = routeXY[i + 1];
+
+        const dx = b.x - a.x;
+        const dy = b.y - a.y;
+
+        const lengthSquared = dx * dx + dy * dy;
+
+        const t = lengthSquared === 0
+          ? 0
+          : Math.max(
+              0,
+              Math.min(
+                1,
+                ((p.x - a.x) * dx +
+                  (p.y - a.y) * dy) /
+                  lengthSquared,
+              ),
+            );
+
+        const nearestX = a.x + t * dx;
+        const nearestY = a.y + t * dy;
+
+        const distance = Math.hypot(
+          p.x - nearestX,
+          p.y - nearestY,
+        );
+
+        minDistance = Math.min(minDistance, distance);
+      }
+
+      return minDistance;
+    });
+
+    const sum = deviations.reduce(
+      (total, distance) => total + distance,
+      0,
+    );
+
+    const over20Count = deviations.filter(
+      (distance) => distance > 20,
+    ).length;
+
+    return {
+      averageM: sum / deviations.length,
+      maxM: Math.max(...deviations),
+      over20mPercent:
+        (over20Count / deviations.length) * 100,
+      pointCount: deviations.length,
+    };
+  };
+
   const startLocation = {
     //latitude: 35.8721,
     //longitude: 140.0106,
@@ -144,6 +250,8 @@ export default function HomeScreen() {
   >([]);
 
   const resultMapRef = useRef<MapView>(null);
+
+  const bgGpsStoppingRef = useRef(false);
 
   // 走行開始時刻
   const runStartTimeRef =
@@ -294,25 +402,55 @@ export default function HomeScreen() {
   };
 
   
-const stopBackgroundGps = async () => {
-  try {
-    const started =
-      await Location.hasStartedLocationUpdatesAsync(
-        LOCATION_TASK_NAME
-      );
 
-    if (started) {
+
+  const stopBackgroundGps = async () => {
+    // 既に停止処理中なら何もしない
+    if (bgGpsStoppingRef.current) {
+      console.log("BG GPS STOP SKIPPED: already stopping");
+      return;
+    }
+
+    // awaitより前にロックする
+    bgGpsStoppingRef.current = true;
+
+    try {
+      const registered =
+        await TaskManager.isTaskRegisteredAsync(
+          LOCATION_TASK_NAME
+        );
+
+      const started =
+        await Location.hasStartedLocationUpdatesAsync(
+          LOCATION_TASK_NAME
+        );
+
+      console.log("BG GPS STOP CHECK:", {
+        registered,
+        started,
+      });
+
+      if (!registered || !started) {
+        console.log("BG GPS: 停止対象なし");
+        return;
+      }
+
       await Location.stopLocationUpdatesAsync(
         LOCATION_TASK_NAME
       );
+
+      console.log("BG GPS STOPPED");
+
+    } catch (error) {
+      console.error("BG GPS STOP ERROR:", error);
+
+    } finally {
+      // 成功・失敗に関係なくロックを解除
+      bgGpsStoppingRef.current = false;
     }
+  };
 
-    console.log("BG GPS STOPPED");
-
-  } catch (error) {
-    console.error("BG GPS STOP ERROR", error);
-  }
-};
+  
 
 
 
@@ -1010,6 +1148,22 @@ const stopBackgroundGps = async () => {
       }[]
     >([]);
 
+  
+  // =====================================
+  // 15.36 STEP3
+  // GPS走行軌跡とルートの乖離距離
+  // =====================================
+
+  const deviationStats = useMemo(
+    () =>
+      calculateDeviationStats(
+        runTrack,
+        routeCoordinates,
+      ),
+    [runTrack, routeCoordinates],
+  );
+
+
   const [status, setStatus] =
     useState("ルート未取得");
 
@@ -1681,6 +1835,54 @@ const stopBackgroundGps = async () => {
               </View>
 
             </View>
+
+
+            {/* =====================================
+                15.36 GPS乖離距離の検証結果
+            ===================================== */}
+            {deviationStats && (
+              <View
+                style={{
+                  marginTop: 16,
+                  marginHorizontal: 20,
+                  padding: 16,
+                  backgroundColor: "#F3F4F6",
+                  borderRadius: 12,
+                }}
+              >
+                <Text
+                  style={{
+                    fontSize: 16,
+                    fontWeight: "bold",
+                    marginBottom: 12,
+                    color: "#111827",
+                  }}
+                >
+                  GPS・ルート乖離分析
+                </Text>
+
+                <Text style={{ fontSize: 14, marginBottom: 6 }}>
+                  平均乖離距離：
+                  {deviationStats.averageM.toFixed(1)} m
+                </Text>
+
+                <Text style={{ fontSize: 14, marginBottom: 6 }}>
+                  最大乖離距離：
+                  {deviationStats.maxM.toFixed(1)} m
+                </Text>
+
+                <Text style={{ fontSize: 14, marginBottom: 6 }}>
+                  20m超のGPS点：
+                  {deviationStats.over20mPercent.toFixed(1)} %
+                </Text>
+
+                <Text style={{ fontSize: 14 }}>
+                  分析対象：
+                  {deviationStats.pointCount} 点
+                </Text>
+              </View>
+            )}
+
 
             {/* 閉じるボタン */}
             <Pressable
