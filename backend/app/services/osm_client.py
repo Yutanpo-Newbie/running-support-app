@@ -463,6 +463,106 @@ def convert_path_to_coordinates(graph, path: list) -> list[dict]:
 
     return coordinates
 
+
+
+def convert_path_to_detailed_coordinates(
+    graph,
+    path: list,
+) -> list[dict]:
+    """
+    OSMエッジのgeometryを使って、
+    道路の曲線を含む表示用座標列を生成する。
+
+    戻り値:
+    [{"lat": ..., "lon": ...}, ...]
+    """
+
+    if not path:
+        return []
+
+    if len(path) == 1:
+        node = graph.nodes[path[0]]
+        return [{
+            "lat": node["y"],
+            "lon": node["x"],
+        }]
+
+    coordinates = []
+
+    for u, v in zip(path[:-1], path[1:]):
+
+        # u → v のエッジ情報を取得
+        edge_data = graph.get_edge_data(u, v)
+
+        if not edge_data:
+            raise ValueError(
+                f"エッジが存在しません: {u} → {v}"
+            )
+
+        # 複数の並行エッジがある場合は
+        # lengthが最小のものを採用
+        edge = min(
+            edge_data.values(),
+            key=lambda data: float(
+                data.get("length", float("inf"))
+            ),
+        )
+
+        geometry = edge.get("geometry")
+
+        if geometry is not None:
+
+            # Shapely座標は (経度, 緯度)
+            edge_coords = list(geometry.coords)
+
+            # geometryの向きが進行方向と
+            # 一致するように調整
+            start_node = graph.nodes[u]
+
+            start_lon = start_node["x"]
+            start_lat = start_node["y"]
+
+            first = edge_coords[0]
+            last = edge_coords[-1]
+
+            first_distance = (
+                (first[0] - start_lon) ** 2
+                + (first[1] - start_lat) ** 2
+            )
+
+            last_distance = (
+                (last[0] - start_lon) ** 2
+                + (last[1] - start_lat) ** 2
+            )
+
+            if last_distance < first_distance:
+                edge_coords.reverse()
+
+        else:
+            # geometryがないエッジは
+            # 始点・終点を直線で結ぶ
+            start_node = graph.nodes[u]
+            end_node = graph.nodes[v]
+
+            edge_coords = [
+                (start_node["x"], start_node["y"]),
+                (end_node["x"], end_node["y"]),
+            ]
+
+        # 隣接エッジの重複座標を除く
+        if coordinates:
+            edge_coords = edge_coords[1:]
+
+        for lon, lat in edge_coords:
+            coordinates.append({
+                "lat": lat,
+                "lon": lon,
+            })
+
+    return coordinates
+
+
+
 def create_loop_path(
     outbound_path: list,
     return_path: list,
@@ -1344,9 +1444,31 @@ def generate_multi_waypoint_route_candidates(
         )
 
 
-        loop_geometry = convert_to_geojson_linestring(
-            coordinates
+
+        # =====================================
+        # 15.36 STEP2
+        # 地図表示用の詳細座標を生成
+        # =====================================
+
+        detailed_coordinates = (
+            convert_path_to_detailed_coordinates(
+                graph=graph,
+                path=path,
+            )
         )
+
+        # 青いルートの表示には詳細座標を使う
+        loop_geometry = convert_to_geojson_linestring(
+            detailed_coordinates
+        )
+
+        print(
+            "ROUTE GEOMETRY DEBUG:",
+            "node_points =", len(coordinates),
+            "detailed_points =", len(detailed_coordinates),
+            flush=True,
+        )
+
 
         # 現段階では既存実装と同様に仮値
         elevation_gain_m = 0.0

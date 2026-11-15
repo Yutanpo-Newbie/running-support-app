@@ -61,6 +61,31 @@ export default function HomeScreen() {
     longitude: 140.0206,
   };
 
+
+  const testLocation = async () => {
+    try {
+      const permission =
+        await Location.getForegroundPermissionsAsync();
+
+      console.log("GPS PERMISSION:", permission);
+
+      const lastLocation =
+        await Location.getLastKnownPositionAsync();
+
+      console.log("LAST LOCATION:", lastLocation);
+
+      const currentLocation =
+        await Location.getCurrentPositionAsync({
+          accuracy: Location.Accuracy.Balanced,
+        });
+
+      console.log("CURRENT LOCATION:", currentLocation);
+    } catch (error) {
+      console.error("GPS TEST ERROR:", error);
+    }
+  };
+
+
   const [currentLocation, setCurrentLocation] =
     useState<{
       latitude: number;
@@ -1666,6 +1691,11 @@ export default function HomeScreen() {
           <Button
             title="バックグラウンドGPS確認"
             onPress={checkBackgroundGps}
+          />
+
+          <Button
+            title="GPS取得テスト"
+            onPress={testLocation}
           />
 
           <View style={styles.navigationRow}>

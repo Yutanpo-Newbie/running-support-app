@@ -167,6 +167,40 @@ def generate_osmnx_routes(request: RouteRequest) -> list[RouteCandidate]:
         dist_m=graph_dist_m,
     )
 
+
+    # =====================================
+    # 15.36 STEP1
+    # OSMエッジの曲線情報を確認
+    # =====================================
+
+    total_edges = 0
+    geometry_edges = 0
+    geometry_samples = []
+
+    for u, v, key, data in graph.edges(
+        keys=True,
+        data=True,
+    ):
+        total_edges += 1
+
+        geometry = data.get("geometry")
+
+        if geometry is not None:
+            geometry_edges += 1
+
+            if len(geometry_samples) < 3:
+                geometry_samples.append({
+                    "start_node": u,
+                    "end_node": v,
+                    "point_count": len(geometry.coords),
+                })
+
+    print("\n=== EDGE GEOMETRY DEBUG ===", flush=True)
+    print("Total edges:", total_edges, flush=True)
+    print("Edges with geometry:", geometry_edges, flush=True)
+    print("Samples:", geometry_samples, flush=True)
+
+
     start_node = get_nearest_node(
         graph=graph,
         lat=start_lat,
