@@ -1,4 +1,5 @@
 from fastapi import APIRouter, HTTPException
+from threading import Lock
 
 from app.core.config import ROUTE_ENGINE
 from app.schemas.route_request import RouteRequest
@@ -10,12 +11,25 @@ from app.services.elevation_client import (
 
 
 router = APIRouter(prefix="/api", tags=["routes"])
+# ルート計算は同時に1件だけ実行
+route_generation_lock = Lock()
 
 @router.post("/routes/suggest", response_model=RouteResponse)
 def suggest_routes(request: RouteRequest):
     if ROUTE_ENGINE == "osmnx":
         try:
-            routes = generate_osmnx_routes(request)
+            # 別のルート計算が実行中なら即座に拒否
+            if not route_generation_lock.acquire(blocking=False):
+                raise HTTPException(
+                    status_code=429,
+                    detail="ルート計算が混雑しています。少し待って再試行してください。",
+                )
+
+            try:
+                routes = generate_osmnx_routes(request)
+
+            finally:
+                route_generation_lock.release()
 
         except ElevationDataUnavailable as error:
             raise HTTPException(

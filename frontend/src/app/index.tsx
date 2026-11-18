@@ -1306,6 +1306,13 @@ export default function HomeScreen() {
       );
 
 
+      if (response.status === 429) {
+        setStatus(
+          "サーバーが混雑しています。少し待って再試行してください"
+        );
+        return;
+      }
+
       if (!response.ok) {
         throw new Error(
           `HTTP Error: ${response.status}`
