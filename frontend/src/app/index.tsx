@@ -5,6 +5,7 @@ import {
   Modal,
   Pressable,
   StyleSheet,
+  ScrollView,
   Text,
   View,
   Vibration,
@@ -52,6 +53,9 @@ type RoutePriority =
   | "distance"
   | "easy"
   | "load";
+
+const API_BASE_URL =
+  "https://difficult-comply-unchain.ngrok-free.dev";
 
 
 export default function HomeScreen() {
@@ -1279,12 +1283,13 @@ export default function HomeScreen() {
       setStatus("取得中...");
 
       const response = await fetch(
-        "http://192.168.40.145:8000/api/routes/suggest",
+        `${API_BASE_URL}/api/routes/suggest`,
         {
           method: "POST",
 
           headers: {
             "Content-Type": "application/json",
+            "ngrok-skip-browser-warning": "1",
           },
 
           body: JSON.stringify({
@@ -1908,15 +1913,19 @@ export default function HomeScreen() {
             {navigationStatus}
           </Text>
 
-          <Button
-            title="バックグラウンドGPS確認"
-            onPress={checkBackgroundGps}
-          />
+          {__DEV__ && (
+            <>
+              <Button
+                title="バックグラウンドGPS確認"
+                onPress={checkBackgroundGps}
+              />
 
-          <Button
-            title="GPS取得テスト"
-            onPress={testLocation}
-          />
+              <Button
+                title="GPS取得テスト"
+                onPress={testLocation}
+              />
+            </>
+          )}
 
           <View style={styles.navigationRow}>
 
@@ -2066,7 +2075,13 @@ export default function HomeScreen() {
       ========================== */}
         {isPanelExpanded && runStatus !== "running" && (
 
-          <View style={styles.panelDetails}>
+          <ScrollView
+          style={styles.panelDetails}
+          contentContainerStyle={styles.panelDetailsContent}
+          showsVerticalScrollIndicator={true}
+          keyboardShouldPersistTaps="handled"
+          nestedScrollEnabled={true}
+          >
 
             {/* -------------------------
               距離入力
@@ -2244,7 +2259,7 @@ export default function HomeScreen() {
 
             </View>
 
-          </View>
+          </ScrollView>
 
         )}
 
@@ -2387,7 +2402,7 @@ const styles = StyleSheet.create({
   },
 
   panelExpanded: {
-    maxHeight: "70%",
+    height: "70%",
   },
 
   panelHandle: {
@@ -2447,6 +2462,12 @@ const styles = StyleSheet.create({
 
   panelDetails: {
     marginTop: 8,
+    flex: 1,
+    minHeight: 0,
+  },
+
+  panelDetailsContent: {
+    paddingBottom: 24,
   },
 
   routeInfo: {
