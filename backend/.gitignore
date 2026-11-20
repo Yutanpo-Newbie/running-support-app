@@ -33,3 +33,7 @@ Thumbs.db
 build/
 dist/
 *.egg-info/
+
+data/elevation_cache.json
+data/graph_cache
+cache
