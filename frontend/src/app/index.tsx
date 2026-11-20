@@ -6,6 +6,7 @@ import {
   Pressable,
   StyleSheet,
   ScrollView,
+  Switch,
   Text,
   View,
   Vibration,
@@ -325,6 +326,35 @@ export default function HomeScreen() {
 
   const [navigationStatus, setNavigationStatus] =
     useState("ナビ待機中");
+
+  // =====================================
+  // 音声・振動ナビ設定
+  // =====================================
+
+  // 初期状態：両方ON
+  const [voiceEnabled, setVoiceEnabled] =
+    useState(true);
+
+  const [vibrationEnabled, setVibrationEnabled] =
+    useState(true);
+
+  // 音声ナビの切り替え
+  const toggleVoiceNavigation = (enabled: boolean) => {
+    setVoiceEnabled(enabled);
+
+    if (!enabled) {
+      void Speech.stop();
+    }
+  };
+
+  // 振動ナビの切り替え
+  const toggleVibrationNavigation = (enabled: boolean) => {
+    setVibrationEnabled(enabled);
+
+    if (!enabled) {
+      Vibration.cancel();
+    }
+  };
 
   const mapRef = useRef<MapView>(null);
 
@@ -1084,15 +1114,19 @@ export default function HomeScreen() {
         currentTurnIndex
       ) {
 
-        // 振動
+        // 振動ナビ
+      if (vibrationEnabled) {
         vibrateForTurn(
           nextTurn.direction
         );
+      }
 
-        // 音声
+      // 音声ナビ
+      if (voiceEnabled) {
         speakForTurn(
           nextTurn.direction
         );
+      }
 
         setVibratedTurnIndex(
           currentTurnIndex
@@ -1142,6 +1176,8 @@ export default function HomeScreen() {
     routeStartLocation,
     vibratedTurnIndex,
     runStatus,
+    voiceEnabled,
+    vibrationEnabled,
   ]);
 
   const [routeCoordinates, setRouteCoordinates] =
@@ -1151,6 +1187,50 @@ export default function HomeScreen() {
         longitude: number;
       }[]
     >([]);
+
+  // ルートに表示する進行方向の矢印
+  const routeArrows = useMemo(() => {
+    if (routeCoordinates.length < 3) {
+      return [];
+    }
+
+    const arrows: {
+      coordinate: MapCoordinate;
+      rotation: number;
+    }[] = [];
+
+    // ルート全体に6個程度の矢印を配置
+    const arrowCount = 6;
+    const lastIndex = routeCoordinates.length - 1;
+
+    for (let i = 1; i <= arrowCount; i++) {
+      const index = Math.min(
+        Math.floor(
+          (lastIndex * i) / (arrowCount + 1)
+        ),
+        lastIndex - 1
+      );
+
+      if (index < 1) {
+        continue;
+      }
+
+      const previous = routeCoordinates[index - 1];
+      const next = routeCoordinates[index + 1];
+
+      const rotation = calculateBearing(
+        previous,
+        next
+      );
+
+      arrows.push({
+        coordinate: routeCoordinates[index],
+        rotation,
+      });
+    }
+
+    return arrows;
+  }, [routeCoordinates]);
 
   
   // =====================================
@@ -1170,6 +1250,11 @@ export default function HomeScreen() {
 
   const [status, setStatus] =
     useState("ルート未取得");
+
+  const [isFetchingRoutes, setIsFetchingRoutes] =
+  useState(false);
+
+  const fetchingRoutesRef = useRef(false);
 
 
   const convertCoordinates = (
@@ -1267,9 +1352,21 @@ export default function HomeScreen() {
 
 
   const fetchRoutes = async () => {
-    if (runStatus === "running") {
+    if (
+      runStatus === "running" ||
+      fetchingRoutesRef.current
+    ) {
       return;
     }
+
+    fetchingRoutesRef.current = true;
+    setIsFetchingRoutes(true);
+
+    const controller = new AbortController();
+
+    const timeoutId = setTimeout(() => {
+      controller.abort();
+    }, 180000);
 
     const requestStart =
       currentLocation ?? startLocation;
@@ -1291,6 +1388,8 @@ export default function HomeScreen() {
             "Content-Type": "application/json",
             "ngrok-skip-browser-warning": "1",
           },
+
+          signal: controller.signal,
 
           body: JSON.stringify({
             start: {
@@ -1354,7 +1453,17 @@ export default function HomeScreen() {
     } catch (error) {
       console.error(error);
 
-      setStatus("取得失敗");
+      if (controller.signal.aborted) {
+        setStatus("取得がタイムアウトしました。再試行してください");
+      } else {
+        setStatus("取得失敗");
+      }
+
+    } finally {
+      clearTimeout(timeoutId);
+
+      fetchingRoutesRef.current = false;
+      setIsFetchingRoutes(false);
     }
   };
 
@@ -1650,6 +1759,42 @@ export default function HomeScreen() {
           />
         )}
 
+        {/* ルート進行方向の矢印 */}
+        {routeArrows.map((arrow, index) => (
+          <Marker
+            key={`route-arrow-${index}`}
+            coordinate={arrow.coordinate}
+            anchor={{ x: 0.5, y: 0.5 }}
+            tracksViewChanges={false}
+          >
+            <View
+              style={{
+                width: 25,
+                height: 25,
+                borderRadius: 13,
+                backgroundColor: "#FFFFFF",
+                borderWidth: 1,
+                borderColor: "#2563EB",
+                alignItems: "center",
+                justifyContent: "center",
+              }}
+            >
+              <Text
+                style={{
+                  fontSize: 18,
+                  fontWeight: "bold",
+                  color: "#2563EB",
+                  transform: [
+                    { rotate: `${arrow.rotation}deg` },
+                  ],
+                }}
+              >
+                ↑
+              </Text>
+            </View>
+          </Marker>
+        ))}
+
         {/* START / GOAL */}
         {routeStartLocation && (
           <Marker
@@ -1919,6 +2064,71 @@ export default function HomeScreen() {
           <Text style={styles.navigationMainText}>
             {navigationStatus}
           </Text>
+
+
+          {/* =====================================
+            音声・振動ナビ ON/OFF
+          ===================================== */}
+          <View
+            style={{
+              flexDirection: "row",
+              alignItems: "center",
+              justifyContent: "space-around",
+              marginTop: 8,
+              marginBottom: 8,
+            }}
+          >
+            {/* 音声ナビ */}
+            <View
+              style={{
+                flexDirection: "row",
+                alignItems: "center",
+                gap: 6,
+              }}
+            >
+              <Text style={{ fontSize: 13 }}>
+                音声ナビ
+              </Text>
+
+              <Switch
+                value={voiceEnabled}
+                onValueChange={toggleVoiceNavigation}
+                trackColor={{
+                  false: "#D1D5DB",
+                  true: "#93C5FD",
+                }}
+                thumbColor={
+                  voiceEnabled ? "#2563EB" : "#F3F4F6"
+                }
+              />
+            </View>
+
+            {/* 振動ナビ */}
+            <View
+              style={{
+                flexDirection: "row",
+                alignItems: "center",
+                gap: 6,
+              }}
+            >
+              <Text style={{ fontSize: 13 }}>
+                振動ナビ
+              </Text>
+
+              <Switch
+                value={vibrationEnabled}
+                onValueChange={toggleVibrationNavigation}
+                trackColor={{
+                  false: "#D1D5DB",
+                  true: "#93C5FD",
+                }}
+                thumbColor={
+                  vibrationEnabled ? "#2563EB" : "#F3F4F6"
+                }
+              />
+            </View>
+          </View>
+
 
           {__DEV__ && (
             <>
@@ -2260,8 +2470,9 @@ export default function HomeScreen() {
             <View style={styles.fetchButtonContainer}>
 
               <Button
-                title="ルート取得"
+                title={isFetchingRoutes ? "取得中..." : "ルート取得"}
                 onPress={fetchRoutes}
+                disabled={isFetchingRoutes}
               />
 
             </View>
@@ -2368,6 +2579,40 @@ function PriorityButton({
 
     </Pressable>
   );
+}
+
+type MapCoordinate = {
+  latitude: number;
+  longitude: number;
+};
+
+// 2地点間の進行方向を角度で返す
+// 北 = 0度、東 = 90度、南 = 180度
+function calculateBearing(
+  start: MapCoordinate,
+  end: MapCoordinate
+): number {
+  const toRadians = (degrees: number) =>
+    (degrees * Math.PI) / 180;
+
+  const lat1 = toRadians(start.latitude);
+  const lat2 = toRadians(end.latitude);
+  const deltaLon = toRadians(
+    end.longitude - start.longitude
+  );
+
+  const y =
+    Math.sin(deltaLon) * Math.cos(lat2);
+
+  const x =
+    Math.cos(lat1) * Math.sin(lat2) -
+    Math.sin(lat1) *
+      Math.cos(lat2) *
+      Math.cos(deltaLon);
+
+  return (
+    (Math.atan2(y, x) * 180) / Math.PI + 360
+  ) % 360;
 }
 
 
