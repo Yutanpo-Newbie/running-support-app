@@ -13,6 +13,7 @@ from app.services.osm_client import (
     generate_multi_waypoint_route_candidates,
 )
 from app.algorithms.turn_detector import detect_turn_points
+from app.algorithms.sidewalk_filter import build_safe_running_graph
 
 def generate_mock_routes(request: RouteRequest) -> list[RouteCandidate]:
     """
@@ -166,6 +167,19 @@ def generate_osmnx_routes(request: RouteRequest) -> list[RouteCandidate]:
         lon=start_lon,
         dist_m=graph_dist_m,
     )
+
+    # =====================================
+    # 歩道優先・幹線道路回避
+    # =====================================
+
+    graph = build_safe_running_graph(graph)
+
+    if graph.number_of_edges() == 0:
+        print(
+            "SAFE RUNNING GRAPH: no usable edges",
+            flush=True,
+        )
+        return []
 
 
     # =====================================

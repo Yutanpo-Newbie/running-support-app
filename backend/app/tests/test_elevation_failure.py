@@ -31,6 +31,14 @@ def test_elevation_failure_all_candidates(
         mock_elevation_failure,
     )
 
+    # 標高エラー処理の検証に集中するため、
+    # 曲がり角検出による候補除外を無効化
+    monkeypatch.setattr(
+        osm_client,
+        "detect_turn_points",
+        lambda coordinates: [],
+    )
+
     # 注意：
     # このテストだけではOSMnxのルート生成まで
     # 実行するため、実道路データに依存する。

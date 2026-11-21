@@ -1043,7 +1043,54 @@ def calculate_steps_distance_m(graph, path: list[int]) -> float:
             )
 
     return round(total_steps_m, 2)
+    
+def detect_junction_turn_points(
+    graph,
+    path: list[int],
+    coordinates: list[dict],
+) -> list[dict]:
+    """
+    実際の分岐点に限定して曲がり角を検出する。
 
+    - 既存の30度以上という角度条件を維持
+    - 接続先が2方向以下の単なる道路の曲がりを除外
+    - 3方向以上の分岐点を案内候補にする
+    """
+
+    if len(path) < 3:
+        return []
+
+    turn_points = []
+
+    for i in range(1, len(path) - 1):
+
+        current_node = path[i]
+
+        # 現在のノードから接続できる道路方向
+        neighbors = (
+            set(graph.predecessors(current_node))
+            | set(graph.successors(current_node))
+        )
+
+        neighbors.discard(current_node)
+
+        # 進行方向を選ぶ必要のない道路の曲がりを除外
+        if len(neighbors) < 3:
+            continue
+
+        # 前・現在・次の3点で従来の角度判定を実行
+        local_coordinates = coordinates[
+            i - 1:i + 2
+        ]
+
+        detected = detect_turn_points(
+            local_coordinates
+        )
+
+        if detected:
+            turn_points.append(detected[0])
+
+    return turn_points
 
 def generate_multi_waypoint_route_candidates(
     graph,
@@ -1344,6 +1391,36 @@ def generate_multi_waypoint_route_candidates(
         )
 
         turn_count = len(turn_points)
+
+        # =====================================
+        # 歩道優先ルートの曲がり角診断
+        # =====================================
+
+        if debug_counts["loop_entered"] <= 3:
+            print(
+                "\n=== TURN POINT DETAIL DEBUG ===",
+                flush=True,
+            )
+
+            print(
+                "route_distance_km =",
+                distance_km,
+                "turn_count =",
+                turn_count,
+                flush=True,
+            )
+
+            for index, point in enumerate(
+                turn_points[:15],
+                start=1,
+            ):
+                print(
+                    f"TURN {index}:",
+                    "direction =", point.get("direction"),
+                    "lat =", point.get("lat"),
+                    "lon =", point.get("lon"),
+                    flush=True,
+                )
 
         if distance_km > 0:
             turn_density = (
