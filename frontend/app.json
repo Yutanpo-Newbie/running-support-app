@@ -18,6 +18,7 @@
       }
     },
     "android": {
+      "package": "com.yutanponewbie.frontend",
       "adaptiveIcon": {
         "backgroundColor": "#E6F4FE",
         "foregroundImage": "./assets/images/android-icon-foreground.png",
@@ -45,9 +46,19 @@
         }
       ],
       [
+        "expo-build-properties",
+        {
+          "android": {
+            "enableMinifyInReleaseBuilds": false
+          }
+        }
+      ],
+      [
         "expo-location",
         {
           "isIosBackgroundLocationEnabled": true,
+          "isAndroidBackgroundLocationEnabled": true,
+          "isAndroidForegroundServiceEnabled": true,
           "locationWhenInUsePermission": "走行中の現在地とルート案内に位置情報を使用します。",
           "locationAlwaysAndWhenInUsePermission": "画面ロック中もランニングの走行記録とナビゲーションを継続するため、位置情報を使用します。"
         }
