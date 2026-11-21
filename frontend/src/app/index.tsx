@@ -1366,7 +1366,7 @@ export default function HomeScreen() {
 
     const timeoutId = setTimeout(() => {
       controller.abort();
-    }, 180000);
+    }, 900000);
 
     const requestStart =
       currentLocation ?? startLocation;
@@ -1765,9 +1765,10 @@ export default function HomeScreen() {
             key={`route-arrow-${index}`}
             coordinate={arrow.coordinate}
             anchor={{ x: 0.5, y: 0.5 }}
-            tracksViewChanges={false}
+            tracksViewChanges={true}
           >
             <View
+            collapsable={false}
               style={{
                 width: 25,
                 height: 25,
