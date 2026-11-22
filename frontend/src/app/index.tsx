@@ -1803,8 +1803,6 @@ export default function HomeScreen() {
     void Speech.stop();
     void stopBackgroundGps();
 
-    void stopBackgroundGps();
-
     // 画面の案内番号を最終状態にする
     if (currentRoute) {
       setCurrentTurnIndex(
@@ -2171,120 +2169,6 @@ export default function HomeScreen() {
             {navigationStatus}
           </Text>
 
-
-          {/* =====================================
-            音声・振動ナビ ON/OFF
-          ===================================== */}
-          <View
-            style={{
-              flexDirection: "row",
-              alignItems: "center",
-              justifyContent: "space-around",
-              marginTop: 8,
-              marginBottom: 8,
-            }}
-          >
-            {/* 音声ナビ */}
-            <View
-              style={{
-                flexDirection: "row",
-                alignItems: "center",
-                gap: 6,
-              }}
-            >
-              <Text style={{ fontSize: 13 }}>
-                音声ナビ
-              </Text>
-
-              <Switch
-                value={voiceEnabled}
-                onValueChange={toggleVoiceNavigation}
-                trackColor={{
-                  false: "#D1D5DB",
-                  true: "#93C5FD",
-                }}
-                thumbColor={
-                  voiceEnabled ? "#2563EB" : "#F3F4F6"
-                }
-              />
-            </View>
-
-            
-            {/* =====================================
-              STEP 17.5 START地点切替
-            ===================================== */}
-            <View
-              style={{
-                flexDirection: "row",
-                alignItems: "center",
-                justifyContent: "space-between",
-                marginTop: 4,
-                marginBottom: 8,
-                paddingHorizontal: 12,
-              }}
-            >
-              <View style={{ flex: 1 }}>
-                <Text style={{ fontSize: 13 }}>
-                  スタート地点を現在地に固定
-                </Text>
-
-                {!useCurrentLocation && (
-                  <Text
-                    style={{
-                      fontSize: 11,
-                      color: "#6B7280",
-                      marginTop: 3,
-                    }}
-                  >
-                    地図をタップしてSTARTを指定
-                  </Text>
-                )}
-              </View>
-
-              <Switch
-                value={useCurrentLocation}
-                onValueChange={toggleStartLocationMode}
-                disabled={runStatus === "running"}
-                trackColor={{
-                  false: "#D1D5DB",
-                  true: "#93C5FD",
-                }}
-                thumbColor={
-                  useCurrentLocation
-                    ? "#2563EB"
-                    : "#F3F4F6"
-                }
-              />
-            </View>
-
-
-            {/* 振動ナビ */}
-            <View
-              style={{
-                flexDirection: "row",
-                alignItems: "center",
-                gap: 6,
-              }}
-            >
-              <Text style={{ fontSize: 13 }}>
-                振動ナビ
-              </Text>
-
-              <Switch
-                value={vibrationEnabled}
-                onValueChange={toggleVibrationNavigation}
-                trackColor={{
-                  false: "#D1D5DB",
-                  true: "#93C5FD",
-                }}
-                thumbColor={
-                  vibrationEnabled ? "#2563EB" : "#F3F4F6"
-                }
-              />
-            </View>
-          </View>
-
-
           {__DEV__ && (
             <>
               <Button
@@ -2454,6 +2338,88 @@ export default function HomeScreen() {
           keyboardShouldPersistTaps="handled"
           nestedScrollEnabled={true}
           >
+
+          
+          {/* =====================================
+            詳細表示時のみナビ設定を表示
+          ===================================== */}
+          <View style={{ marginBottom: 18 }}>
+
+          <Text style={styles.sectionTitle}>
+            ナビゲーション設定
+          </Text>
+
+          {/* 音声ナビ */}
+          <View style={styles.settingRow}>
+            <Text style={styles.settingLabel}>
+              音声ナビ
+            </Text>
+
+            <Switch
+              value={voiceEnabled}
+              onValueChange={toggleVoiceNavigation}
+              trackColor={{
+                false: "#D1D5DB",
+                true: "#93C5FD",
+              }}
+              thumbColor={
+                voiceEnabled ? "#2563EB" : "#F3F4F6"
+              }
+            />
+          </View>
+
+          {/* 振動ナビ */}
+          <View style={styles.settingRow}>
+            <Text style={styles.settingLabel}>
+              振動ナビ
+            </Text>
+
+            <Switch
+              value={vibrationEnabled}
+              onValueChange={toggleVibrationNavigation}
+              trackColor={{
+                false: "#D1D5DB",
+                true: "#93C5FD",
+              }}
+              thumbColor={
+                vibrationEnabled ? "#2563EB" : "#F3F4F6"
+              }
+            />
+          </View>
+
+          {/* スタート地点の設定 */}
+          <View style={styles.settingRow}>
+            <View style={{ flex: 1, paddingRight: 8 }}>
+              <Text style={styles.settingLabel}>
+                スタート地点を現在地に固定
+              </Text>
+
+              {!useCurrentLocation && (
+                <Text style={{
+                  fontSize: 11,
+                  color: "#6B7280",
+                  marginTop: 3,
+                }}>
+                  地図をタップしてSTARTを指定
+                </Text>
+              )}
+            </View>
+
+            <Switch
+              value={useCurrentLocation}
+              onValueChange={toggleStartLocationMode}
+              trackColor={{
+                false: "#D1D5DB",
+                true: "#93C5FD",
+              }}
+              thumbColor={
+                useCurrentLocation ? "#2563EB" : "#F3F4F6"
+              }
+            />
+          </View>
+
+          </View>
+
 
             {/* -------------------------
               距離入力
@@ -3182,6 +3148,19 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: "bold",
     color: "#6D28D9",
+  },
+
+  settingRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingVertical: 6,
+    paddingHorizontal: 4,
+  },
+  
+  settingLabel: {
+    fontSize: 13,
+    color: "#111827",
   },
 
 
