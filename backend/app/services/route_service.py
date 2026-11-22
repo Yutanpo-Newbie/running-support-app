@@ -12,8 +12,9 @@ from app.services.osm_client import (
     generate_loop_route_candidates,
     generate_multi_waypoint_route_candidates,
 )
-from app.algorithms.turn_detector import detect_turn_points
+from app.algorithms.turn_detector import detect_turn_points, calculate_bearing
 from app.algorithms.sidewalk_filter import build_safe_running_graph
+from collections import Counter
 
 def generate_mock_routes(request: RouteRequest) -> list[RouteCandidate]:
     """
@@ -234,6 +235,7 @@ def generate_osmnx_routes(request: RouteRequest) -> list[RouteCandidate]:
         tolerance_m=300,
         max_candidates=40,
         avoid_steps=True,
+        direction_balanced=True,
     )
 
     print(
@@ -241,6 +243,54 @@ def generate_osmnx_routes(request: RouteRequest) -> list[RouteCandidate]:
         len(candidate_nodes),
         flush=True,
     )
+
+
+    # =====================================
+    # 16.10 経由地点候補の方向分布を調査
+    # =====================================
+
+    direction_counts = Counter()
+
+    direction_names = [
+        "N", "NE", "E", "SE",
+        "S", "SW", "W", "NW",
+    ]
+
+    for candidate in candidate_nodes:
+
+        bearing = calculate_bearing(
+            start_lat,
+            start_lon,
+            candidate["lat"],
+            candidate["lon"],
+        )
+
+        # 45度ごとの8方向へ分類
+        direction_index = int(
+            (bearing + 22.5) // 45
+        ) % 8
+
+        direction_counts[
+            direction_names[direction_index]
+        ] += 1
+
+    print(
+        "\n=== WAYPOINT DIRECTION DEBUG ===",
+        flush=True,
+    )
+
+    for direction in direction_names:
+        print(
+            f"{direction}:",
+            direction_counts[direction],
+            flush=True,
+        )
+
+    print(
+        "=== WAYPOINT DIRECTION DEBUG END ===",
+        flush=True,
+    )
+
 
     osm_route_candidates = (
         generate_multi_waypoint_route_candidates(
@@ -265,9 +315,7 @@ def generate_osmnx_routes(request: RouteRequest) -> list[RouteCandidate]:
 
         coordinates = route["coordinates"]
 
-        turn_points = detect_turn_points(
-            coordinates
-        )
+        turn_points = route["turn_points"]
 
         route_candidate = RouteCandidate(
             id=f"osm_route_{index:03d}",
