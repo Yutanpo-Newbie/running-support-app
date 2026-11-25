@@ -8,17 +8,14 @@ from app.algorithms.turn_detector import (
     normalize_angle,
 )
 from collections import Counter
-
 from app.algorithms.turn_aware_router import (
     shortest_turn_aware_path,
     get_used_edges,
 )
-
 from app.algorithms.waypoint_generator import (
     generate_waypoint_pairs,
     group_nearby_waypoints,
 )
-
 from app.services.elevation_client import (
     get_route_elevation_gain,
     ElevationDataUnavailable,
@@ -27,7 +24,6 @@ from app.algorithms.scoring import (
     calculate_total_score,
     calculate_final_route_score,
 )
-
 from pathlib import Path
 import math
 import json
